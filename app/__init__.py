@@ -19,7 +19,7 @@ def create_app():
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=12)
     
-    CORS(app, resources={r"/api/*": {"origins": "https://xtract-indol.vercel.apps"}})  # Allow frontend origin in production
+    CORS(app, resources={r"/api/*": {"origins": "https://xtract-indol.vercel.app"}})  # Allow frontend origin in production
     jwt = JWTManager(app)
     
     @jwt.invalid_token_loader
