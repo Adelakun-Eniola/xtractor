@@ -1,25 +1,33 @@
-FROM python:3.10-slim
+FROM python:3.13-slim
 
-# Install system dependencies for Chromium
+# Install dependencies
 RUN apt-get update && apt-get install -y \
     chromium \
     chromium-driver \
     wget \
-    curl \
+    gnupg \
     unzip \
-    && apt-get clean \
+    fonts-liberation \
+    libnss3 \
+    libxss1 \
+    libasound2 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxrandr2 \
+    libgbm1 \
+    libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Environment variables for Selenium in container
+# Env vars for Selenium
 ENV CHROMIUM_PATH=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
-# Install Python deps
+WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy app
-COPY . /app
-WORKDIR /app
+COPY . .
 
 CMD ["python", "run.py"]
