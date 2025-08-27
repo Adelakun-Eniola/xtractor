@@ -2,12 +2,14 @@ import pandas as pd
 import re
 from email_validator import validate_email
 from webdriver_manager.chrome import ChromeDriverManager
+import platform
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 import logging
+from selenium.webdriver.chrome.service import Service
 import os
 import time
 
@@ -40,56 +42,34 @@ class WebScraper:
         url_pattern = r'^(https?:\/\/)?([\w\-]+(\.[\w\-]+)+)(\/.*)?$'
         return url if url != "N/A" and re.match(url_pattern, url, re.IGNORECASE) else "N/A"
 
-    def setup_driver(self, browser="chrome", headless=True):
-        logging.info(f"Setting up webdriver for {browser} (headless={headless})")
-        options = None
-        driver = None
 
-        if browser.lower() == "chrome":
-            options = webdriver.ChromeOptions()
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            if headless:
-                options.add_argument("--headless")
-            options.binary_location = os.getenv('GOOGLE_CHROME_BIN', '/usr/bin/google-chrome')
-            try:
-                driver = webdriver.Chrome(
-                    service=webdriver.chrome.service.Service(
-                        os.getenv('CHROMEDRIVER_PATH', ChromeDriverManager().install())
-                    ),
-                    options=options
-                )
-            except WebDriverException as e:
-                logging.critical(f"Failed to initialize Chrome WebDriver: {e}")
-                raise
-        elif browser.lower() == "firefox":
-            options = webdriver.FirefoxOptions()
-            if headless:
-                options.add_argument("--headless")
-            try:
-                driver = webdriver.Firefox(
-                    service=webdriver.firefox.service.Service(GeckoDriverManager().install()),
-                    options=options
-                )
-            except WebDriverException as e:
-                logging.critical(f"Failed to initialize Firefox WebDriver: {e}")
-                raise
-        elif browser.lower() == "edge":
-            options = webdriver.EdgeOptions()
-            if headless:
-                options.add_argument("--headless")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            try:
-                driver = webdriver.Edge(
-                    service=webdriver.edge.service.Service(EdgeChromiumDriverManager().install()),
-                    options=options
-                )
-            except WebDriverException as e:
-                logging.critical(f"Failed to initialize Edge WebDriver: {e}")
-                raise
-        else:
-            raise ValueError(f"Unsupported browser: {browser}. Choose 'chrome', 'firefox', or 'edge'")
+
+    def setup_driver(self, headless=True):
+        logging.info(f"Setting up Chromium webdriver (headless={headless})")
+
+        options = webdriver.ChromeOptions()
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--remote-debugging-port=9222")
+        options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36")
+
+        if headless:
+            options.add_argument("--headless=new")
+
+        system = platform.system().lower()
+
+        if system == "darwin":  # macOS dev
+            # Use Chrome + webdriver_manager
+            driver_path = ChromeDriverManager().install()
+            service = Service(driver_path)
+            driver = webdriver.Chrome(service=service, options=options)
+        else:  # Linux (Render)
+            chromium_path = os.getenv("CHROMIUM_PATH", "/usr/bin/chromium")
+            chromedriver_path = os.getenv("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
+            options.binary_location = chromium_path
+            service = Service(executable_path=chromedriver_path)
+            driver = webdriver.Chrome(service=service, options=options)
 
         return driver
 

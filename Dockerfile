@@ -1,18 +1,25 @@
-FROM python:3.13-slim
+FROM python:3.10-slim
 
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
+# Install system dependencies for Chromium
 RUN apt-get update && apt-get install -y \
-    google-chrome-stable \
+    chromium \
+    chromium-driver \
+    wget \
+    curl \
+    unzip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-ENV CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
-ENV GOOGLE_CHROME_BIN=/usr/bin/google-chrome
+# Environment variables for Selenium in container
+ENV CHROMIUM_PATH=/usr/bin/chromium
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
-COPY . .
+# Install Python deps
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["gunicorn", "-w", "4", "-k", "gevent", "run:app"]
+# Copy app
+COPY . /app
+WORKDIR /app
+
+CMD ["python", "run.py"]
