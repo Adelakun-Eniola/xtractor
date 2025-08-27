@@ -161,3 +161,13 @@ def google_auth():
     except Exception as e:
         logger.error(f"Unexpected error in google_auth: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+# @auth_bp.route('/check', methods=['GET'])
+# @jwt_required()
+# def check_token():
+#     user_id = int(get_jwt_identity())
+#     user = User.query.get(user_id)
+#     if not user:
+#         return jsonify({'error': 'User not found'}), 404
+#     return jsonify({'message': 'Token is valid'}), 200
