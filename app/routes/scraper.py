@@ -9,6 +9,11 @@ import re
 import os
 import logging
 
+from flask_cors import CORS
+
+CORS(app, resources={r"/api/*": {"origins": "https://xtract-indol.vercel.app"}})
+
+
 scraper_bp = Blueprint('scraper', __name__, url_prefix='/api/scraper')
 
 @scraper_bp.route('/health', methods=['GET'])
@@ -26,7 +31,7 @@ def health_check():
 def extract_data():
     """Extract data from a website or Google Maps search results"""
     try:
-        user_id = int(get_jwt_identity())  # Cast string to int (from JWT sub claim)
+        user_id = int(get_jwt_identity())  
         
         # Get URL from request
         data = request.get_json()
