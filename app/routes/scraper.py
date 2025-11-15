@@ -11,15 +11,34 @@ import logging
 
 scraper_bp = Blueprint('scraper', __name__, url_prefix='/api/scraper')
 
+@scraper_bp.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'ok',
+        'message': 'Scraper service is running',
+        'chromium_path': os.getenv('CHROMIUM_PATH', 'Not set'),
+        'chromedriver_path': os.getenv('CHROMEDRIVER_PATH', 'Not set')
+    }), 200
+
 @scraper_bp.route('/extract', methods=['POST'])
 @jwt_required()
 def extract_data():
     """Extract data from a website or Google Maps search results"""
-    user_id = int(get_jwt_identity())  # Cast string to int (from JWT sub claim)
-    
-    # Get URL from request
-    data = request.get_json()
-    url = data.get('url')
+    try:
+        user_id = int(get_jwt_identity())  # Cast string to int (from JWT sub claim)
+        
+        # Get URL from request
+        data = request.get_json()
+        url = data.get('url')
+        
+        logging.info(f"Extract endpoint called by user {user_id} with URL: {url}")
+    except Exception as e:
+        logging.error(f"Error in extract_data initialization: {str(e)}")
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
     
     url_pattern = re.compile(r'^https?://[^\s/$.?#].[^\s]*$')
     if not url or not url_pattern.match(url):
