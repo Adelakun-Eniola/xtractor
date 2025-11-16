@@ -14,7 +14,7 @@ from flask_cors import CORS
 
 
 scraper_bp = Blueprint('scraper', __name__, url_prefix='/api/scraper')
-
+CORS(scraper_bp)
 @scraper_bp.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
