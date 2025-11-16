@@ -11,7 +11,6 @@ import logging
 
 from flask_cors import CORS
 
-CORS(app, resources={r"/api/*": {"origins": "https://xtract-indol.vercel.app"}})
 
 
 scraper_bp = Blueprint('scraper', __name__, url_prefix='/api/scraper')
