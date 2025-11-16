@@ -30,7 +30,7 @@ def health_check():
 def extract_data():
     """Extract data from a website or Google Maps search results"""
     try:
-        user_id = int(get_jwt_identity())  
+        user_id = int(get_jwt_identity())
         
         # Get URL from request
         data = request.get_json()

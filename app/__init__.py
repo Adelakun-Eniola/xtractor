@@ -12,6 +12,8 @@ db = SQLAlchemy()
 
 def create_app():
     app = Flask(__name__)
+    CORS(app)
+
 
     # CORS(app, resources={r"/api/*": {"origins": "https://xtract-indol.vercel.app"}})
 
