@@ -495,7 +495,6 @@ class GoogleMapsSearchScraper:
         
         results = []
         errors = []
-        db_records = []  # Track database records for adding IDs after commit
         
         try:
             # Setup driver for extracting business URLs
@@ -528,6 +527,12 @@ class GoogleMapsSearchScraper:
                 self.driver = None
                 logging.info("Search driver closed, beginning individual business scraping")
             
+            # Limit to first 5 businesses to avoid memory issues on free tier
+            MAX_BUSINESSES = 5
+            if len(business_urls) > MAX_BUSINESSES:
+                logging.warning(f"Limiting scraping to first {MAX_BUSINESSES} businesses (found {len(business_urls)}) to avoid memory issues")
+                business_urls = business_urls[:MAX_BUSINESSES]
+            
             # Iterate through each business URL and scrape individually
             for index, business_url in enumerate(business_urls, start=1):
                 logging.info(f"Processing business {index}/{len(business_urls)}: {business_url}")
@@ -554,20 +559,32 @@ class GoogleMapsSearchScraper:
                             user_id=user_id
                         )
                         
-                        # Add to database session
-                        db.session.add(new_data)
-                        db_records.append(new_data)
-                        
-                        # Add to results list (will update with ID after commit)
-                        results.append({
-                            'company_name': scraped_data.get('company_name', 'N/A'),
-                            'email': scraped_data.get('email', 'N/A'),
-                            'phone': scraped_data.get('phone', 'N/A'),
-                            'address': scraped_data.get('address', 'N/A'),
-                            'website_url': business_url
-                        })
-                        
-                        logging.info(f"Successfully scraped business {index}/{len(business_urls)}: {business_name}")
+                        # Commit immediately to database to free memory
+                        try:
+                            db.session.add(new_data)
+                            db.session.commit()
+                            logging.info(f"Successfully saved business {index}/{len(business_urls)} to database")
+                            
+                            # Add to results list with database ID
+                            results.append({
+                                'id': new_data.id,
+                                'company_name': scraped_data.get('company_name', 'N/A'),
+                                'email': scraped_data.get('email', 'N/A'),
+                                'phone': scraped_data.get('phone', 'N/A'),
+                                'address': scraped_data.get('address', 'N/A'),
+                                'website_url': business_url,
+                                'created_at': new_data.created_at.strftime('%Y-%m-%d %H:%M:%S')
+                            })
+                            
+                            logging.info(f"Successfully scraped business {index}/{len(business_urls)}: {business_name}")
+                        except Exception as db_error:
+                            logging.error(f"Database error for business {index}: {str(db_error)}")
+                            db.session.rollback()
+                            errors.append({
+                                'url': business_url,
+                                'business_name': business_name,
+                                'error': f"Database error: {str(db_error)}"
+                            })
                     else:
                         # No meaningful data extracted
                         error_msg = "No meaningful data extracted from business page"
@@ -614,43 +631,10 @@ class GoogleMapsSearchScraper:
                         'error': error_msg
                     })
                 
-                # Add delay between scrapes to avoid detection (1-2 seconds)
+                # Add delay between scrapes to avoid detection and free memory
                 if index < len(business_urls):  # Don't delay after the last one
                     delay = 1.5  # 1.5 seconds between scrapes
                     time.sleep(delay)
-            
-            # Commit all successful records to database in a single transaction
-            if db_records:
-                try:
-                    db.session.commit()
-                    logging.info(f"Successfully committed {len(db_records)} records to database")
-                    
-                    # Update results with database IDs and created_at timestamps
-                    for i, db_record in enumerate(db_records):
-                        if i < len(results):
-                            results[i]['id'] = db_record.id
-                            results[i]['created_at'] = db_record.created_at.strftime('%Y-%m-%d %H:%M:%S')
-                            
-                except Exception as e:
-                    error_msg = f"Database commit failed: {str(e)}"
-                    logging.error(f"Database error: {error_msg}")
-                    # Rollback the failed transaction
-                    try:
-                        db.session.rollback()
-                        logging.info("Database transaction rolled back successfully")
-                    except Exception as rollback_error:
-                        logging.error(f"Failed to rollback database transaction: {rollback_error}")
-                    
-                    # Add error to errors list
-                    errors.append({
-                        'url': self.search_url,
-                        'business_name': 'N/A',
-                        'error': error_msg
-                    })
-                    # Clear results since commit failed
-                    results = []
-            else:
-                logging.warning("No database records to commit")
             
             logging.info(f"Multi-business scraping complete. Successfully scraped: {len(results)}, Failed: {len(errors)}")
             
