@@ -12,11 +12,6 @@ db = SQLAlchemy()
 
 def create_app():
     app = Flask(__name__)
-    CORS(app)
-
-
-    # CORS(app, resources={r"/api/*": {"origins": "https://xtract-indol.vercel.app"}})
-
     
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
     app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'dev-jwt-secret')
