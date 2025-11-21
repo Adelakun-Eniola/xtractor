@@ -527,12 +527,6 @@ class GoogleMapsSearchScraper:
                 self.driver = None
                 logging.info("Search driver closed, beginning individual business scraping")
             
-            # Limit to first 5 businesses to avoid memory issues on free tier
-            MAX_BUSINESSES = 5
-            if len(business_urls) > MAX_BUSINESSES:
-                logging.warning(f"Limiting scraping to first {MAX_BUSINESSES} businesses (found {len(business_urls)}) to avoid memory issues")
-                business_urls = business_urls[:MAX_BUSINESSES]
-            
             # Iterate through each business URL and scrape individually
             for index, business_url in enumerate(business_urls, start=1):
                 logging.info(f"Processing business {index}/{len(business_urls)}: {business_url}")
@@ -678,6 +672,128 @@ class GoogleMapsSearchScraper:
                     logging.info("Search driver closed in finally block")
                 except Exception as e:
                     logging.error(f"Error closing search driver: {e}")
+    
+    def scrape_all_businesses_stream(self, user_id):
+        """
+        Stream businesses as they're scraped (generator function).
+        Yields each business result immediately after scraping.
+        
+        Args:
+            user_id: The ID of the user initiating the scraping request
+            
+        Yields:
+            Dictionary with result data for each business as it's scraped
+        """
+        from app.models.scraped_data import ScrapedData
+        from app import db
+        
+        logging.info(f"Starting STREAMING multi-business scraping for user {user_id}")
+        
+        try:
+            # Setup driver for extracting business URLs
+            try:
+                self.driver = self.setup_driver()
+                yield {'type': 'status', 'message': 'Extracting business URLs...'}
+            except WebDriverException as e:
+                yield {'type': 'error', 'error': f"Failed to setup WebDriver: {str(e)}"}
+                return
+            
+            # Extract all business URLs
+            business_urls = self.extract_business_urls()
+            
+            if not business_urls:
+                yield {'type': 'error', 'error': 'No business listings found'}
+                return
+            
+            total_count = len(business_urls)
+            yield {'type': 'status', 'message': f'Found {total_count} businesses. Starting scraping...', 'total': total_count}
+            
+            # Close search driver
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
+            
+            # Scrape each business and yield immediately
+            for index, business_url in enumerate(business_urls, start=1):
+                business_name = 'Unknown'
+                
+                try:
+                    # Scrape this business
+                    scraper = WebScraper(business_url)
+                    scraped_data = scraper.scrape()
+                    business_name = scraped_data.get('company_name', 'Unknown')
+                    
+                    if scraped_data and scraped_data.get('company_name') != 'N/A':
+                        # Save to database immediately
+                        try:
+                            new_data = ScrapedData(
+                                company_name=scraped_data.get('company_name', 'N/A'),
+                                email=scraped_data.get('email', 'N/A'),
+                                phone=scraped_data.get('phone', 'N/A'),
+                                address=scraped_data.get('address', 'N/A'),
+                                website_url=business_url,
+                                user_id=user_id
+                            )
+                            db.session.add(new_data)
+                            db.session.commit()
+                            
+                            # Yield this result immediately
+                            yield {
+                                'type': 'result',
+                                'data': {
+                                    'id': new_data.id,
+                                    'company_name': scraped_data.get('company_name', 'N/A'),
+                                    'email': scraped_data.get('email', 'N/A'),
+                                    'phone': scraped_data.get('phone', 'N/A'),
+                                    'address': scraped_data.get('address', 'N/A'),
+                                    'website_url': business_url,
+                                    'created_at': new_data.created_at.strftime('%Y-%m-%d %H:%M:%S')
+                                },
+                                'progress': {
+                                    'current': index,
+                                    'total': total_count
+                                }
+                            }
+                            
+                        except Exception as db_error:
+                            logging.error(f"Database error: {str(db_error)}")
+                            db.session.rollback()
+                            yield {
+                                'type': 'error',
+                                'error': f"Database error for {business_name}: {str(db_error)}",
+                                'business_name': business_name,
+                                'url': business_url
+                            }
+                    else:
+                        yield {
+                            'type': 'error',
+                            'error': 'No meaningful data extracted',
+                            'business_name': business_name,
+                            'url': business_url
+                        }
+                        
+                except Exception as e:
+                    logging.error(f"Error scraping {business_url}: {str(e)}")
+                    yield {
+                        'type': 'error',
+                        'error': str(e),
+                        'business_name': business_name,
+                        'url': business_url
+                    }
+                
+                # Small delay between scrapes
+                if index < total_count:
+                    time.sleep(1.5)
+                    
+        except Exception as e:
+            logging.error(f"Fatal error in streaming: {str(e)}")
+            yield {'type': 'error', 'error': f"Fatal error: {str(e)}"}
+        finally:
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
     
     def __del__(self):
         """Cleanup driver on object destruction"""

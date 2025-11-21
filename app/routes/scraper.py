@@ -35,8 +35,9 @@ def extract_data():
         # Get URL from request
         data = request.get_json()
         url = data.get('url')
+        stream = data.get('stream', False)  # Check if streaming is requested
         
-        logging.info(f"Extract endpoint called by user {user_id} with URL: {url}")
+        logging.info(f"Extract endpoint called by user {user_id} with URL: {url}, stream={stream}")
     except Exception as e:
         logging.error(f"Error in extract_data initialization: {str(e)}")
         return jsonify({
@@ -61,6 +62,36 @@ def extract_data():
     if is_google_maps_search_url(url):
         logging.info(f"Detected Google Maps search URL, using GoogleMapsSearchScraper")
         
+        # If streaming is requested, use streaming endpoint
+        if stream:
+            from flask import Response
+            import json
+            
+            def generate():
+                """Generator function that yields results as they're scraped"""
+                try:
+                    search_scraper = GoogleMapsSearchScraper(url)
+                    
+                    # Send initial status
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Starting scraping...'})}\n\n"
+                    
+                    # Stream results as they come
+                    for result in search_scraper.scrape_all_businesses_stream(user_id):
+                        yield f"data: {json.dumps(result)}\n\n"
+                    
+                    # Send completion
+                    yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+                    
+                except Exception as e:
+                    error_data = {
+                        'type': 'error',
+                        'error': str(e)
+                    }
+                    yield f"data: {json.dumps(error_data)}\n\n"
+            
+            return Response(generate(), mimetype='text/event-stream')
+        
+        # Non-streaming (original behavior)
         try:
             # Use GoogleMapsSearchScraper for search results
             search_scraper = GoogleMapsSearchScraper(url)
