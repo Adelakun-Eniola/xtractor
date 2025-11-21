@@ -488,8 +488,8 @@ class GoogleMapsSearchScraper:
             Dictionary with 'results' (list of scraped data dicts) and 
             'errors' (list of error dicts with url and error message)
         """
-        from backend.app.models.scraped_data import ScrapedData
-        from backend.app import db
+        from app.models.scraped_data import ScrapedData
+        from app import db
         
         logging.info(f"Starting coordinated multi-business scraping for user {user_id} from URL: {self.search_url}")
         
