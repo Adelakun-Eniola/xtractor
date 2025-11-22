@@ -709,7 +709,11 @@ class GoogleMapsSearchScraper:
             Dictionary with result data for each business as it's scraped
         """
         from app.models.scraped_data import ScrapedData
-        from app import db
+        from app import db, create_app
+        
+        # Get app context for database operations
+        app = create_app()
+        app.app_context().push()
         
         logging.info(f"Starting STREAMING multi-business scraping for user {user_id}")
         
