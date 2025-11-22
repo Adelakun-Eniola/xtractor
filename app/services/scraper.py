@@ -117,28 +117,88 @@ class WebScraper:
             logging.error(f"WebDriver error navigating to {self.url}: {e}")
             return self.data
 
+        # Extract business name (works for both Google Maps and regular websites)
         try:
-            business_name_element = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//h1|//h2"))
-            )
-            self.data['company_name'] = business_name_element.text.strip() or "N/A"
+            if "google.com/maps" in self.url:
+                # Google Maps specific selectors
+                name_selectors = [
+                    "//h1[contains(@class, 'DUwDvf')]",  # Main business name
+                    "//h1[@class='fontHeadlineLarge']",
+                    "//h1",
+                    "//div[@role='main']//h1"
+                ]
+                for selector in name_selectors:
+                    try:
+                        business_name_element = self.driver.find_element(By.XPATH, selector)
+                        name = business_name_element.text.strip()
+                        if name:
+                            self.data['company_name'] = name
+                            logging.info(f"Found business name: {name}")
+                            break
+                    except NoSuchElementException:
+                        continue
+            else:
+                business_name_element = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//h1|//h2"))
+                )
+                self.data['company_name'] = business_name_element.text.strip() or "N/A"
         except (TimeoutException, NoSuchElementException):
             logging.warning("Business name element not found.")
 
+        # Extract address
         try:
-            address_element = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//address|//div[contains(@class, 'address')]"))
-            )
-            self.data['address'] = address_element.text.strip() or "N/A"
+            if "google.com/maps" in self.url:
+                # Google Maps specific selectors for address
+                address_selectors = [
+                    "//button[@data-item-id='address']//div[contains(@class, 'fontBodyMedium')]",
+                    "//div[@data-tooltip='Copy address']",
+                    "//button[contains(@aria-label, 'Address')]//div",
+                    "//div[contains(@class, 'rogA2c')]"  # Address container
+                ]
+                for selector in address_selectors:
+                    try:
+                        address_element = self.driver.find_element(By.XPATH, selector)
+                        address = address_element.text.strip()
+                        if address and len(address) > 5:  # Basic validation
+                            self.data['address'] = address
+                            logging.info(f"Found address: {address}")
+                            break
+                    except NoSuchElementException:
+                        continue
+            else:
+                address_element = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//address|//div[contains(@class, 'address')]"))
+                )
+                self.data['address'] = address_element.text.strip() or "N/A"
         except (TimeoutException, NoSuchElementException):
             logging.warning("Address element not found.")
 
+        # Extract phone
         try:
-            phone_element = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, "//a[contains(@href, 'tel:')]"))
-            )
-            phone = phone_element.text.strip() or phone_element.get_attribute("href").replace("tel:", "")
-            self.data['phone'] = self.validate_phone_number(phone)
+            if "google.com/maps" in self.url:
+                # Google Maps specific selectors for phone
+                phone_selectors = [
+                    "//button[@data-item-id='phone:tel:']//div[contains(@class, 'fontBodyMedium')]",
+                    "//button[contains(@aria-label, 'Phone')]//div[contains(@class, 'fontBodyMedium')]",
+                    "//a[contains(@href, 'tel:')]",
+                    "//button[contains(@data-tooltip, 'Copy phone number')]"
+                ]
+                for selector in phone_selectors:
+                    try:
+                        phone_element = self.driver.find_element(By.XPATH, selector)
+                        phone = phone_element.text.strip() or phone_element.get_attribute("href", "").replace("tel:", "")
+                        if phone:
+                            self.data['phone'] = self.validate_phone_number(phone)
+                            logging.info(f"Found phone: {phone}")
+                            break
+                    except NoSuchElementException:
+                        continue
+            else:
+                phone_element = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//a[contains(@href, 'tel:')]"))
+                )
+                phone = phone_element.text.strip() or phone_element.get_attribute("href").replace("tel:", "")
+                self.data['phone'] = self.validate_phone_number(phone)
         except (TimeoutException, NoSuchElementException):
             logging.warning("Phone element not found.")
 
