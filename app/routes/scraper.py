@@ -50,11 +50,18 @@ def extract_data():
         logging.warning(f"Invalid URL provided: {url}")
         return jsonify({'error': 'Invalid URL provided'}), 400
     
-    # Verify user exists
+    # Verify user exists (create if doesn't exist)
     user = User.query.get(user_id)
     if not user:
-        logging.error(f"User not found: {user_id}")
-        return jsonify({'error': 'User not found'}), 404
+        logging.warning(f"User {user_id} not found, creating placeholder user")
+        user = User(id=user_id, email=f"user{user_id}@placeholder.com", name=f"User {user_id}", google_id=f"placeholder_{user_id}")
+        db.session.add(user)
+        try:
+            db.session.commit()
+            logging.info(f"Created placeholder user {user_id}")
+        except:
+            db.session.rollback()
+            logging.error(f"Failed to create user {user_id}, but continuing anyway")
     
     logging.info(f"User {user_id} initiated scraping for URL: {url}")
     
