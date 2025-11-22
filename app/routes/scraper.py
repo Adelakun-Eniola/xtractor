@@ -203,6 +203,59 @@ def extract_data():
                 'details': str(e)
             }), 500
 
+@scraper_bp.route('/search-businesses', methods=['POST'])
+@jwt_required()
+def search_businesses():
+    """Get list of businesses from Google Maps search URL without scraping details"""
+    try:
+        user_id = int(get_jwt_identity())
+        data = request.get_json()
+        url = data.get('url')
+        
+        logging.info(f"Search businesses endpoint called by user {user_id} with URL: {url}")
+        
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+        
+        # Check if it's a Google Maps search URL
+        if not is_google_maps_search_url(url):
+            return jsonify({'error': 'URL must be a Google Maps search URL'}), 400
+        
+        # Extract business URLs from search results
+        search_scraper = GoogleMapsSearchScraper(url)
+        search_scraper.driver = search_scraper.setup_driver()
+        
+        try:
+            business_urls = search_scraper.extract_business_urls()
+            
+            if not business_urls:
+                return jsonify({
+                    'message': 'No businesses found',
+                    'businesses': []
+                }), 200
+            
+            # Return just the URLs
+            businesses = [{'url': url, 'index': i+1} for i, url in enumerate(business_urls)]
+            
+            logging.info(f"Found {len(businesses)} businesses for user {user_id}")
+            
+            return jsonify({
+                'message': f'Found {len(businesses)} businesses',
+                'count': len(businesses),
+                'businesses': businesses
+            }), 200
+            
+        finally:
+            if search_scraper.driver:
+                search_scraper.driver.quit()
+                
+    except Exception as e:
+        logging.error(f"Error in search_businesses: {str(e)}")
+        return jsonify({
+            'error': 'Failed to search businesses',
+            'details': str(e)
+        }), 500
+
 @scraper_bp.route('/batch', methods=['POST'])
 @jwt_required()
 def batch_extract():
