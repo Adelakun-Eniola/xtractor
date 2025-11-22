@@ -144,12 +144,36 @@ class WebScraper:
 
         if "google.com/maps" in self.url:
             try:
-                website_element = self.driver.find_element(
-                    By.XPATH,
-                    "//a[contains(@href, 'http') and (contains(text(), 'Website') or contains(@aria-label, 'Website'))]"
-                )
-                self.data['website_url'] = self.validate_url(website_element.get_attribute("href"))
-            except NoSuchElementException:
+                # Try multiple selectors to find the website link
+                website_selectors = [
+                    "//a[contains(@href, 'http') and contains(@aria-label, 'Website')]",
+                    "//a[contains(@data-item-id, 'authority') and contains(@href, 'http')]",
+                    "//a[contains(@href, 'http') and contains(text(), 'Website')]",
+                    "//a[@data-tooltip='Open website']",
+                    "//div[contains(@class, 'fontBodyMedium')]//a[contains(@href, 'http')]"
+                ]
+                
+                website_url = None
+                for selector in website_selectors:
+                    try:
+                        website_element = self.driver.find_element(By.XPATH, selector)
+                        href = website_element.get_attribute("href")
+                        # Make sure it's not a Google URL
+                        if href and 'google.com' not in href and 'goo.gl' not in href:
+                            website_url = href
+                            logging.info(f"Found website URL: {website_url}")
+                            break
+                    except NoSuchElementException:
+                        continue
+                
+                if website_url:
+                    self.data['website_url'] = self.validate_url(website_url)
+                else:
+                    logging.warning("No website URL found on Google Maps page")
+                    self.data['website_url'] = "N/A"
+                    
+            except Exception as e:
+                logging.error(f"Error finding website URL: {e}")
                 self.data['website_url'] = "N/A"
         else:
             self.data['website_url'] = self.validate_url(self.url)
