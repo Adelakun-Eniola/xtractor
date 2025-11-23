@@ -502,24 +502,37 @@ class GoogleMapsSearchScraper:
             
             # Find all business listing containers
             # Google Maps uses div elements with specific classes for each listing
-            try:
-                # Try to find the parent containers that hold both name and link
-                business_containers = self.driver.find_elements(
-                    By.XPATH,
-                    "//div[contains(@class, 'Nv2PK')]"  # Common container class for listings
-                )
-                
-                if not business_containers:
-                    # Fallback: try alternative selectors
-                    business_containers = self.driver.find_elements(
-                        By.XPATH,
-                        "//a[contains(@href, '/maps/place/')]/.."
-                    )
-                
-                logging.info(f"Found {len(business_containers)} business containers")
-            except NoSuchElementException as e:
-                logging.warning(f"No business containers found on page: {e}")
-                return []
+            business_containers = []
+            
+            # Try multiple strategies to find business containers
+            container_selectors = [
+                "//div[contains(@class, 'Nv2PK')]",  # Common container class
+                "//div[contains(@class, 'THOPZb')]",  # Alternative container
+                "//div[@role='article']",  # Role-based selector
+                "//a[contains(@href, '/maps/place/')]/..",  # Parent of link
+            ]
+            
+            for selector in container_selectors:
+                try:
+                    business_containers = self.driver.find_elements(By.XPATH, selector)
+                    if business_containers and len(business_containers) > 0:
+                        logging.info(f"Found {len(business_containers)} business containers using selector: {selector}")
+                        break
+                except Exception as e:
+                    logging.warning(f"Selector {selector} failed: {e}")
+                    continue
+            
+            if not business_containers:
+                logging.error("No business containers found with any selector")
+                # Last resort: try to get just the links
+                try:
+                    links = self.driver.find_elements(By.XPATH, "//a[contains(@href, '/maps/place/')]")
+                    logging.info(f"Fallback: Found {len(links)} business links directly")
+                    # Create pseudo-containers from links
+                    business_containers = links
+                except Exception as e:
+                    logging.error(f"Even fallback link extraction failed: {e}")
+                    return []
             
             # Extract business info
             businesses = []
@@ -527,9 +540,14 @@ class GoogleMapsSearchScraper:
             
             for container in business_containers:
                 try:
-                    # Find the link element within this container
-                    link_element = container.find_element(By.XPATH, ".//a[contains(@href, '/maps/place/')]")
-                    href = link_element.get_attribute("href")
+                    # Check if container is already a link element (fallback case)
+                    if container.tag_name == 'a':
+                        link_element = container
+                        href = link_element.get_attribute("href")
+                    else:
+                        # Find the link element within this container
+                        link_element = container.find_element(By.XPATH, ".//a[contains(@href, '/maps/place/')]")
+                        href = link_element.get_attribute("href")
                     
                     if not href or '/maps/place/' not in href:
                         continue
@@ -543,22 +561,44 @@ class GoogleMapsSearchScraper:
                     
                     # Extract business name - try multiple selectors
                     business_name = "Unknown Business"
-                    name_selectors = [
-                        ".//div[contains(@class, 'fontHeadlineSmall')]",  # Common name class
-                        ".//div[contains(@class, 'qBF1Pd')]",  # Alternative name class
-                        ".//span[contains(@class, 'OSrXXb')]",  # Another alternative
-                        ".//a[contains(@href, '/maps/place/')]",  # Fallback to link text
-                    ]
                     
-                    for selector in name_selectors:
-                        try:
-                            name_element = container.find_element(By.XPATH, selector)
-                            name_text = name_element.text.strip()
-                            if name_text and len(name_text) > 0:
-                                business_name = name_text
-                                break
-                        except NoSuchElementException:
-                            continue
+                    # If container is a link, try to get aria-label or text
+                    if container.tag_name == 'a':
+                        aria_label = container.get_attribute("aria-label")
+                        if aria_label and len(aria_label) > 0:
+                            business_name = aria_label
+                        else:
+                            text = container.text.strip()
+                            if text and len(text) > 0:
+                                business_name = text
+                    else:
+                        # Try multiple selectors within container
+                        name_selectors = [
+                            ".//div[contains(@class, 'fontHeadlineSmall')]",  # Common name class
+                            ".//div[contains(@class, 'qBF1Pd')]",  # Alternative name class
+                            ".//span[contains(@class, 'OSrXXb')]",  # Another alternative
+                            ".//div[contains(@class, 'fontBodyMedium')]",  # Another class
+                            ".//a[contains(@href, '/maps/place/')]",  # Fallback to link text
+                        ]
+                        
+                        for selector in name_selectors:
+                            try:
+                                name_element = container.find_element(By.XPATH, selector)
+                                name_text = name_element.text.strip()
+                                if name_text and len(name_text) > 0:
+                                    business_name = name_text
+                                    break
+                            except NoSuchElementException:
+                                continue
+                        
+                        # If still no name, try aria-label on the link
+                        if business_name == "Unknown Business":
+                            try:
+                                aria_label = link_element.get_attribute("aria-label")
+                                if aria_label and len(aria_label) > 0:
+                                    business_name = aria_label
+                            except:
+                                pass
                     
                     # Add to results
                     seen_urls.add(base_url)

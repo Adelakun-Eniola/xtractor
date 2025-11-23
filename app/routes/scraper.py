@@ -207,6 +207,7 @@ def extract_data():
 @jwt_required()
 def search_businesses():
     """Get list of businesses from Google Maps search URL without scraping details"""
+    search_scraper = None
     try:
         user_id = int(get_jwt_identity())
         data = request.get_json()
@@ -215,22 +216,39 @@ def search_businesses():
         logging.info(f"Search businesses endpoint called by user {user_id} with URL: {url}")
         
         if not url:
+            logging.error("No URL provided in request")
             return jsonify({'error': 'URL is required'}), 400
         
         # Check if it's a Google Maps search URL
         if not is_google_maps_search_url(url):
+            logging.error(f"URL is not a Google Maps search URL: {url}")
             return jsonify({'error': 'URL must be a Google Maps search URL'}), 400
         
         # Extract businesses with names from search results
+        logging.info("Creating GoogleMapsSearchScraper instance")
         search_scraper = GoogleMapsSearchScraper(url)
-        search_scraper.driver = search_scraper.setup_driver()
+        
+        logging.info("Setting up WebDriver")
+        try:
+            search_scraper.driver = search_scraper.setup_driver()
+            logging.info("WebDriver setup successful")
+        except Exception as driver_error:
+            logging.error(f"Failed to setup WebDriver: {str(driver_error)}")
+            return jsonify({
+                'error': 'Failed to initialize browser',
+                'details': str(driver_error)
+            }), 500
         
         try:
+            logging.info("Extracting businesses with names")
             businesses_data = search_scraper.extract_businesses_with_names()
+            logging.info(f"Extraction complete. Found {len(businesses_data)} businesses")
             
             if not businesses_data:
+                logging.warning("No businesses found in search results")
                 return jsonify({
                     'message': 'No businesses found',
+                    'count': 0,
                     'businesses': []
                 }), 200
             
@@ -244,7 +262,7 @@ def search_businesses():
                 for i, business in enumerate(businesses_data)
             ]
             
-            logging.info(f"Found {len(businesses)} businesses for user {user_id}")
+            logging.info(f"Successfully found {len(businesses)} businesses for user {user_id}")
             
             return jsonify({
                 'message': f'Found {len(businesses)} businesses',
@@ -252,12 +270,40 @@ def search_businesses():
                 'businesses': businesses
             }), 200
             
+        except TimeoutException as e:
+            logging.error(f"Timeout while extracting businesses: {str(e)}")
+            return jsonify({
+                'error': 'Timeout while loading Google Maps',
+                'details': str(e)
+            }), 408
+            
+        except WebDriverException as e:
+            logging.error(f"WebDriver error while extracting businesses: {str(e)}")
+            return jsonify({
+                'error': 'Browser error occurred',
+                'details': str(e)
+            }), 500
+            
         finally:
-            if search_scraper.driver:
-                search_scraper.driver.quit()
+            if search_scraper and search_scraper.driver:
+                try:
+                    search_scraper.driver.quit()
+                    logging.info("WebDriver closed successfully")
+                except Exception as quit_error:
+                    logging.error(f"Error closing WebDriver: {str(quit_error)}")
                 
     except Exception as e:
-        logging.error(f"Error in search_businesses: {str(e)}")
+        logging.error(f"Unexpected error in search_businesses: {str(e)}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Try to close driver if it exists
+        if search_scraper and hasattr(search_scraper, 'driver') and search_scraper.driver:
+            try:
+                search_scraper.driver.quit()
+            except:
+                pass
+        
         return jsonify({
             'error': 'Failed to search businesses',
             'details': str(e)
