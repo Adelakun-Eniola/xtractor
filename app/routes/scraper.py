@@ -221,21 +221,28 @@ def search_businesses():
         if not is_google_maps_search_url(url):
             return jsonify({'error': 'URL must be a Google Maps search URL'}), 400
         
-        # Extract business URLs from search results
+        # Extract businesses with names from search results
         search_scraper = GoogleMapsSearchScraper(url)
         search_scraper.driver = search_scraper.setup_driver()
         
         try:
-            business_urls = search_scraper.extract_business_urls()
+            businesses_data = search_scraper.extract_businesses_with_names()
             
-            if not business_urls:
+            if not businesses_data:
                 return jsonify({
                     'message': 'No businesses found',
                     'businesses': []
                 }), 200
             
-            # Return just the URLs
-            businesses = [{'url': url, 'index': i+1} for i, url in enumerate(business_urls)]
+            # Add index to each business
+            businesses = [
+                {
+                    'index': i+1,
+                    'name': business['name'],
+                    'url': business['url']
+                }
+                for i, business in enumerate(businesses_data)
+            ]
             
             logging.info(f"Found {len(businesses)} businesses for user {user_id}")
             

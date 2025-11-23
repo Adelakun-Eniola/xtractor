@@ -474,7 +474,18 @@ class GoogleMapsSearchScraper:
         Returns:
             List of unique business detail page URLs (strings)
         """
-        logging.info(f"Extracting business URLs from search results: {self.search_url}")
+        businesses = self.extract_businesses_with_names()
+        return [business['url'] for business in businesses]
+    
+    def extract_businesses_with_names(self):
+        """
+        Extract business information (name and URL) from Google Maps search results.
+        Finds all business listings, extracts their names and URLs, and deduplicates.
+        
+        Returns:
+            List of dictionaries with 'name' and 'url' keys
+        """
+        logging.info(f"Extracting businesses with names from search results: {self.search_url}")
         
         try:
             # Navigate to the search URL
@@ -489,75 +500,111 @@ class GoogleMapsSearchScraper:
             # Scroll to load more results
             self.scroll_results_panel()
             
-            # Find all anchor elements with href containing '/maps/place/'
+            # Find all business listing containers
+            # Google Maps uses div elements with specific classes for each listing
             try:
-                business_link_elements = self.driver.find_elements(
+                # Try to find the parent containers that hold both name and link
+                business_containers = self.driver.find_elements(
                     By.XPATH,
-                    "//a[contains(@href, '/maps/place/')]"
+                    "//div[contains(@class, 'Nv2PK')]"  # Common container class for listings
                 )
-                logging.info(f"Found {len(business_link_elements)} business link elements")
+                
+                if not business_containers:
+                    # Fallback: try alternative selectors
+                    business_containers = self.driver.find_elements(
+                        By.XPATH,
+                        "//a[contains(@href, '/maps/place/')]/.."
+                    )
+                
+                logging.info(f"Found {len(business_containers)} business containers")
             except NoSuchElementException as e:
-                logging.warning(f"No business link elements found on page: {e}")
+                logging.warning(f"No business containers found on page: {e}")
                 return []
             
-            # Extract URLs and deduplicate
-            business_urls = []
+            # Extract business info
+            businesses = []
             seen_urls = set()
             
-            for element in business_link_elements:
+            for container in business_containers:
                 try:
-                    href = element.get_attribute("href")
+                    # Find the link element within this container
+                    link_element = container.find_element(By.XPATH, ".//a[contains(@href, '/maps/place/')]")
+                    href = link_element.get_attribute("href")
                     
-                    # Validate that href exists and contains '/maps/place/'
-                    if href and '/maps/place/' in href:
-                        # Clean the URL (remove query parameters that might cause duplicates)
-                        # Keep the base URL up to the place identifier
-                        base_url = href.split('?')[0] if '?' in href else href
-                        
-                        # Deduplicate using the base URL
-                        if base_url not in seen_urls:
-                            seen_urls.add(base_url)
-                            business_urls.append(href)  # Keep original URL with parameters
-                            
+                    if not href or '/maps/place/' not in href:
+                        continue
+                    
+                    # Clean the URL for deduplication
+                    base_url = href.split('?')[0] if '?' in href else href
+                    
+                    # Skip if we've already seen this business
+                    if base_url in seen_urls:
+                        continue
+                    
+                    # Extract business name - try multiple selectors
+                    business_name = "Unknown Business"
+                    name_selectors = [
+                        ".//div[contains(@class, 'fontHeadlineSmall')]",  # Common name class
+                        ".//div[contains(@class, 'qBF1Pd')]",  # Alternative name class
+                        ".//span[contains(@class, 'OSrXXb')]",  # Another alternative
+                        ".//a[contains(@href, '/maps/place/')]",  # Fallback to link text
+                    ]
+                    
+                    for selector in name_selectors:
+                        try:
+                            name_element = container.find_element(By.XPATH, selector)
+                            name_text = name_element.text.strip()
+                            if name_text and len(name_text) > 0:
+                                business_name = name_text
+                                break
+                        except NoSuchElementException:
+                            continue
+                    
+                    # Add to results
+                    seen_urls.add(base_url)
+                    businesses.append({
+                        'name': business_name,
+                        'url': href
+                    })
+                    
                 except NoSuchElementException as e:
-                    logging.warning(f"Element disappeared while extracting href: {e}")
+                    logging.warning(f"Could not extract business info from container: {e}")
                     continue
                 except Exception as e:
-                    logging.warning(f"Error extracting href from element: {e}")
+                    logging.warning(f"Error extracting business info: {e}")
                     continue
             
             # Log results
-            unique_count = len(business_urls)
-            logging.info(f"Successfully extracted {unique_count} unique business URLs")
+            unique_count = len(businesses)
+            logging.info(f"Successfully extracted {unique_count} unique businesses with names")
             
-            # Handle cases where fewer than 10 results are found
             if unique_count < 10:
-                logging.warning(f"Found fewer than 10 business URLs ({unique_count} found). This may be expected if the search has limited results.")
+                logging.warning(f"Found fewer than 10 businesses ({unique_count} found). This may be expected if the search has limited results.")
             
-            # Validate URLs before returning
-            validated_urls = []
+            # Validate URLs
+            validated_businesses = []
             url_pattern = r'^https?:\/\/'
             
-            for url in business_urls:
-                if re.match(url_pattern, url):
-                    validated_urls.append(url)
+            for business in businesses:
+                if re.match(url_pattern, business['url']):
+                    validated_businesses.append(business)
                 else:
-                    logging.warning(f"Invalid URL format, skipping: {url}")
+                    logging.warning(f"Invalid URL format, skipping: {business['url']}")
             
-            logging.info(f"Returning {len(validated_urls)} validated business URLs")
-            return validated_urls
+            logging.info(f"Returning {len(validated_businesses)} validated businesses")
+            return validated_businesses
             
         except TimeoutException as e:
             logging.error(f"Timeout while loading Google Maps search results (timeout after 15s): {e}")
             return []
         except NoSuchElementException as e:
-            logging.warning(f"Required element not found while extracting business URLs: {e}")
+            logging.warning(f"Required element not found while extracting businesses: {e}")
             return []
         except WebDriverException as e:
-            logging.error(f"WebDriver error while extracting business URLs: {e}")
+            logging.error(f"WebDriver error while extracting businesses: {e}")
             return []
         except Exception as e:
-            logging.error(f"Unexpected error while extracting business URLs: {e}")
+            logging.error(f"Unexpected error while extracting businesses: {e}")
             return []
     
     def scrape_all_businesses(self, user_id):
