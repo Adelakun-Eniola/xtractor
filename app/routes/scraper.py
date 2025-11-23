@@ -212,8 +212,9 @@ def search_businesses():
         user_id = int(get_jwt_identity())
         data = request.get_json()
         url = data.get('url')
+        include_phone = data.get('include_phone', False)  # Optional parameter
         
-        logging.info(f"Search businesses endpoint called by user {user_id} with URL: {url}")
+        logging.info(f"Search businesses endpoint called by user {user_id} with URL: {url}, include_phone: {include_phone}")
         
         if not url:
             logging.error("No URL provided in request")
@@ -252,15 +253,23 @@ def search_businesses():
                     'businesses': []
                 }), 200
             
-            # Add index to each business
-            businesses = [
-                {
+            # Add index to each business and optionally extract phone
+            businesses = []
+            for i, business in enumerate(businesses_data):
+                business_info = {
                     'index': i+1,
                     'name': business['name'],
                     'url': business['url']
                 }
-                for i, business in enumerate(businesses_data)
-            ]
+                
+                # Optionally extract phone numbers
+                if include_phone:
+                    logging.info(f"Extracting phone for business {i+1}/{len(businesses_data)}: {business['name']}")
+                    phone = search_scraper.extract_phone_from_business_page(business['url'])
+                    business_info['phone'] = phone
+                    logging.info(f"Business {i+1}/{len(businesses_data)}: {business['name']} - Phone: {phone}")
+                
+                businesses.append(business_info)
             
             logging.info(f"Successfully found {len(businesses)} businesses for user {user_id}")
             

@@ -647,6 +647,64 @@ class GoogleMapsSearchScraper:
             logging.error(f"Unexpected error while extracting businesses: {e}")
             return []
     
+    def extract_phone_from_business_page(self, business_url):
+        """
+        Extract phone number from a Google Maps business detail page.
+        
+        Args:
+            business_url: URL of the business detail page
+            
+        Returns:
+            Phone number string or 'N/A' if not found
+        """
+        logging.info(f"Extracting phone number from: {business_url}")
+        
+        try:
+            # Navigate to the business page
+            self.driver.get(business_url)
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            time.sleep(2)  # Allow page to load
+            
+            # Try multiple selectors for phone number
+            phone_selectors = [
+                "//button[@data-item-id='phone:tel:']//div[contains(@class, 'fontBodyMedium')]",
+                "//button[contains(@aria-label, 'Phone')]//div[contains(@class, 'fontBodyMedium')]",
+                "//a[contains(@href, 'tel:')]",
+                "//button[contains(@data-tooltip, 'Copy phone number')]//div",
+                "//div[contains(@class, 'rogA2c') and contains(., '+')]",  # Container with phone
+            ]
+            
+            for selector in phone_selectors:
+                try:
+                    phone_element = self.driver.find_element(By.XPATH, selector)
+                    phone_text = phone_element.text.strip()
+                    
+                    # If it's a tel: link, extract from href
+                    if not phone_text:
+                        href = phone_element.get_attribute("href")
+                        if href and 'tel:' in href:
+                            phone_text = href.replace("tel:", "").strip()
+                    
+                    # Validate phone number format
+                    if phone_text and len(phone_text) > 5:
+                        logging.info(f"Found phone number: {phone_text}")
+                        return phone_text
+                        
+                except NoSuchElementException:
+                    continue
+            
+            logging.warning(f"No phone number found on page: {business_url}")
+            return "N/A"
+            
+        except TimeoutException as e:
+            logging.warning(f"Timeout loading business page: {e}")
+            return "N/A"
+        except Exception as e:
+            logging.error(f"Error extracting phone number: {e}")
+            return "N/A"
+    
     def scrape_all_businesses(self, user_id):
         """
         Coordinate extraction of all businesses from Google Maps search results.
