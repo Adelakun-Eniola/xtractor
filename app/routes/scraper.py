@@ -213,8 +213,81 @@ def search_businesses():
         data = request.get_json()
         url = data.get('url')
         include_phone = data.get('include_phone', False)  # Optional parameter
+        stream = data.get('stream', False)  # Enable streaming
         
-        logging.info(f"Search businesses endpoint called by user {user_id} with URL: {url}, include_phone: {include_phone}")
+        logging.info(f"Search businesses endpoint called by user {user_id} with URL: {url}, include_phone: {include_phone}, stream: {stream}")
+        
+        # If streaming is requested, use SSE
+        if stream and include_phone:
+            from flask import Response
+            import json
+            
+            def generate():
+                """Generator function for Server-Sent Events"""
+                search_scraper = None
+                try:
+                    # Send initial status
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Starting search...'})}\n\n"
+                    
+                    # Check URL
+                    if not url:
+                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL is required'})}\n\n"
+                        return
+                    
+                    if not is_google_maps_search_url(url):
+                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL must be a Google Maps search URL'})}\n\n"
+                        return
+                    
+                    # Create scraper
+                    search_scraper = GoogleMapsSearchScraper(url)
+                    search_scraper.driver = search_scraper.setup_driver()
+                    
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Extracting businesses...'})}\n\n"
+                    
+                    # Get all businesses first
+                    businesses_data = search_scraper.extract_businesses_with_names()
+                    
+                    if not businesses_data:
+                        yield f"data: {json.dumps({'type': 'complete', 'message': 'No businesses found', 'total': 0})}\n\n"
+                        return
+                    
+                    total = len(businesses_data)
+                    yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting phone numbers...', 'total': total})}\n\n"
+                    
+                    # Stream each business with phone
+                    for i, business in enumerate(businesses_data, 1):
+                        business_info = {
+                            'index': i,
+                            'name': business['name'],
+                            'url': business['url']
+                        }
+                        
+                        # Extract phone
+                        if business.get('phone'):
+                            business_info['phone'] = business['phone']
+                        else:
+                            phone = search_scraper.extract_phone_from_business_page(business['url'])
+                            business_info['phone'] = phone if phone else 'N/A'
+                        
+                        # Send this business immediately
+                        yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
+                    
+                    # Send completion
+                    yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses', 'total': total})}\n\n"
+                    
+                except Exception as e:
+                    logging.error(f"Error in streaming: {str(e)}")
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+                finally:
+                    if search_scraper and search_scraper.driver:
+                        try:
+                            search_scraper.driver.quit()
+                        except:
+                            pass
+            
+            return Response(generate(), mimetype='text/event-stream')
+        
+        # Non-streaming (original behavior)
         
         if not url:
             logging.error("No URL provided in request")
@@ -255,6 +328,8 @@ def search_businesses():
             
             # Add index to each business and optionally extract phone
             businesses = []
+            phones_extracted = 0
+            
             for i, business in enumerate(businesses_data):
                 business_info = {
                     'index': i+1,
@@ -262,14 +337,29 @@ def search_businesses():
                     'url': business['url']
                 }
                 
-                # Optionally extract phone numbers
-                if include_phone:
-                    logging.info(f"Extracting phone for business {i+1}/{len(businesses_data)}: {business['name']}")
-                    phone = search_scraper.extract_phone_from_business_page(business['url'])
-                    business_info['phone'] = phone
-                    logging.info(f"Business {i+1}/{len(businesses_data)}: {business['name']} - Phone: {phone}")
+                # Handle phone numbers
+                if include_phone and phones_extracted < phone_limit:
+                    # Check if phone was already extracted from search results
+                    if business.get('phone'):
+                        business_info['phone'] = business['phone']
+                        logging.info(f"Business {i+1}/{len(businesses_data)}: {business['name']} - Phone from listing: {business['phone']}")
+                        phones_extracted += 1
+                    else:
+                        # Visit individual page to extract phone (only up to limit)
+                        logging.info(f"Extracting phone {phones_extracted+1}/{phone_limit} for: {business['name']}")
+                        phone = search_scraper.extract_phone_from_business_page(business['url'])
+                        business_info['phone'] = phone if phone else 'N/A'
+                        phones_extracted += 1
+                        if phone:
+                            logging.info(f"Business {i+1}/{len(businesses_data)}: {business['name']} - Phone: {phone}")
+                else:
+                    # Even if not requested, include phone if it was found in search results
+                    if business.get('phone'):
+                        business_info['phone'] = business['phone']
                 
                 businesses.append(business_info)
+            
+            logging.info(f"Extracted phones for {phones_extracted} businesses")
             
             logging.info(f"Successfully found {len(businesses)} businesses for user {user_id}")
             

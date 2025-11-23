@@ -600,12 +600,20 @@ class GoogleMapsSearchScraper:
                             except:
                                 pass
                     
+                    # Try to extract phone number from the listing (if visible in search results)
+                    # Note: Google Maps usually doesn't show phone numbers in search results
+                    # They only appear when you click on the business
+                    phone_number = None
+                    
                     # Add to results
                     seen_urls.add(base_url)
-                    businesses.append({
+                    business_data = {
                         'name': business_name,
                         'url': href
-                    })
+                    }
+                    if phone_number:
+                        business_data['phone'] = phone_number
+                    businesses.append(business_data)
                     
                 except NoSuchElementException as e:
                     logging.warning(f"Could not extract business info from container: {e}")
@@ -650,22 +658,22 @@ class GoogleMapsSearchScraper:
     def extract_phone_from_business_page(self, business_url):
         """
         Extract phone number from a Google Maps business detail page.
+        OPTIMIZED: Faster loading with reduced wait times.
         
         Args:
             business_url: URL of the business detail page
             
         Returns:
-            Phone number string or 'N/A' if not found
+            Phone number string or None if not found
         """
-        logging.info(f"Extracting phone number from: {business_url}")
-        
         try:
             # Navigate to the business page
             self.driver.get(business_url)
-            WebDriverWait(self.driver, 10).until(
+            # Reduced wait time from 10 to 5 seconds
+            WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(2)  # Allow page to load
+            time.sleep(1)  # Reduced from 2 to 1 second
             
             # Try multiple selectors for phone number
             phone_selectors = [
@@ -689,21 +697,16 @@ class GoogleMapsSearchScraper:
                     
                     # Validate phone number format
                     if phone_text and len(phone_text) > 5:
-                        logging.info(f"Found phone number: {phone_text}")
                         return phone_text
                         
                 except NoSuchElementException:
                     continue
             
-            logging.warning(f"No phone number found on page: {business_url}")
-            return "N/A"
+            return None
             
-        except TimeoutException as e:
-            logging.warning(f"Timeout loading business page: {e}")
-            return "N/A"
-        except Exception as e:
-            logging.error(f"Error extracting phone number: {e}")
-            return "N/A"
+        except (TimeoutException, Exception) as e:
+            logging.warning(f"Could not extract phone from {business_url}: {str(e)}")
+            return None
     
     def scrape_all_businesses(self, user_id):
         """
