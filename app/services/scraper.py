@@ -340,7 +340,7 @@ class GoogleMapsSearchScraper:
 
         system = platform.system().lower()
 
-        if system == "darwin":  # macOS dev
+        if system == "darwin":  
             # Use Chrome + webdriver_manager
             driver_path = ChromeDriverManager().install()
             service = Service(driver_path)

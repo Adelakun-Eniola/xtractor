@@ -256,21 +256,35 @@ def search_businesses():
                     
                     # Stream each business with phone
                     for i, business in enumerate(businesses_data, 1):
-                        business_info = {
-                            'index': i,
-                            'name': business['name'],
-                            'url': business['url']
-                        }
-                        
-                        # Extract phone
-                        if business.get('phone'):
-                            business_info['phone'] = business['phone']
-                        else:
-                            phone = search_scraper.extract_phone_from_business_page(business['url'])
-                            business_info['phone'] = phone if phone else 'N/A'
-                        
-                        # Send this business immediately
-                        yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
+                        try:
+                            business_info = {
+                                'index': i,
+                                'name': business['name'],
+                                'url': business['url']
+                            }
+                            
+                            # Extract phone
+                            if business.get('phone'):
+                                business_info['phone'] = business['phone']
+                                logging.info(f"Business {i}/{total}: {business['name']} - Phone from listing: {business['phone']}")
+                            else:
+                                logging.info(f"Extracting phone for business {i}/{total}: {business['name']}")
+                                try:
+                                    phone = search_scraper.extract_phone_from_business_page(business['url'])
+                                    business_info['phone'] = phone if phone else 'N/A'
+                                    logging.info(f"Business {i}/{total}: {business['name']} - Phone: {business_info['phone']}")
+                                except Exception as phone_error:
+                                    logging.error(f"Error extracting phone for {business['name']}: {str(phone_error)}")
+                                    business_info['phone'] = 'N/A'
+                            
+                            # Send this business immediately
+                            yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
+                            
+                        except Exception as business_error:
+                            logging.error(f"Error processing business {i}/{total}: {str(business_error)}")
+                            # Send error for this business but continue
+                            yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
+                            continue
                     
                     # Send completion
                     yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses', 'total': total})}\n\n"
@@ -285,7 +299,10 @@ def search_businesses():
                         except:
                             pass
             
-            return Response(generate(), mimetype='text/event-stream')
+            response = Response(generate(), mimetype='text/event-stream')
+            response.headers['Cache-Control'] = 'no-cache'
+            response.headers['X-Accel-Buffering'] = 'no'
+            return response
         
         # Non-streaming (original behavior)
         
