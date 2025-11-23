@@ -84,6 +84,33 @@ class WebScraper:
         options.add_argument("--disable-gpu")
         options.add_argument("--remote-debugging-port=9222")
         options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36")
+        
+        # Memory optimization for Render (512MB limit)
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-plugins")
+        options.add_argument("--disable-images")  # Don't load images
+        options.add_argument("--blink-settings=imagesEnabled=false")
+        options.add_argument("--disable-javascript")  # Disable JS where possible
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--disable-sync")
+        options.add_argument("--disable-translate")
+        options.add_argument("--hide-scrollbars")
+        options.add_argument("--metrics-recording-only")
+        options.add_argument("--mute-audio")
+        options.add_argument("--no-first-run")
+        options.add_argument("--safebrowsing-disable-auto-update")
+        options.add_argument("--media-cache-size=1")
+        options.add_argument("--disk-cache-size=1")
+        options.add_argument("--aggressive-cache-discard")
+        options.add_argument("--disable-cache")
+        options.add_argument("--disable-application-cache")
+        options.add_argument("--disable-offline-load-stale-cache")
+        options.add_argument("--disk-cache-size=0")
+        
+        # Set memory limits
+        options.add_argument("--max-old-space-size=256")  # Limit V8 memory
+        options.add_argument("--renderer-process-limit=1")  # Only 1 renderer process
 
         if headless:
             options.add_argument("--headless=new")

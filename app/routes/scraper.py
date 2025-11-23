@@ -280,6 +280,18 @@ def search_businesses():
                             # Send this business immediately
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
+                            # Memory optimization: Restart driver every 5 businesses to free memory
+                            if i % 5 == 0 and i < total:
+                                logging.info(f"Restarting driver after {i} businesses to free memory")
+                                try:
+                                    search_scraper.driver.quit()
+                                    import time
+                                    time.sleep(2)  # Wait for cleanup
+                                    search_scraper.driver = search_scraper.setup_driver()
+                                    logging.info("Driver restarted successfully")
+                                except Exception as restart_error:
+                                    logging.error(f"Error restarting driver: {str(restart_error)}")
+                            
                         except Exception as business_error:
                             logging.error(f"Error processing business {i}/{total}: {str(business_error)}")
                             # Send error for this business but continue
