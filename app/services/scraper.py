@@ -90,7 +90,7 @@ class WebScraper:
         options.add_argument("--disable-plugins")
         options.add_argument("--disable-images")  # Don't load images
         options.add_argument("--blink-settings=imagesEnabled=false")
-        options.add_argument("--disable-javascript")  # Disable JS where possible
+        # NOTE: Cannot disable JavaScript - Google Maps requires it
         options.add_argument("--disable-background-networking")
         options.add_argument("--disable-default-apps")
         options.add_argument("--disable-sync")
@@ -681,6 +681,53 @@ class GoogleMapsSearchScraper:
         except Exception as e:
             logging.error(f"Unexpected error while extracting businesses: {e}")
             return []
+    
+    def extract_phone_from_business_page(self, business_url):
+        """
+        Extract phone number from a Google Maps business detail page.
+        
+        Args:
+            business_url: URL of the business detail page
+            
+        Returns:
+            Phone number string or None if not found
+        """
+        try:
+            self.driver.get(business_url)
+            WebDriverWait(self.driver, 5).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            time.sleep(1)
+            
+            phone_selectors = [
+                "//button[@data-item-id='phone:tel:']//div[contains(@class, 'fontBodyMedium')]",
+                "//button[contains(@aria-label, 'Phone')]//div[contains(@class, 'fontBodyMedium')]",
+                "//a[contains(@href, 'tel:')]",
+                "//button[contains(@data-tooltip, 'Copy phone number')]//div",
+                "//div[contains(@class, 'rogA2c') and contains(., '+')]",
+            ]
+            
+            for selector in phone_selectors:
+                try:
+                    phone_element = self.driver.find_element(By.XPATH, selector)
+                    phone_text = phone_element.text.strip()
+                    
+                    if not phone_text:
+                        href = phone_element.get_attribute("href")
+                        if href and 'tel:' in href:
+                            phone_text = href.replace("tel:", "").strip()
+                    
+                    if phone_text and len(phone_text) > 5:
+                        return phone_text
+                        
+                except NoSuchElementException:
+                    continue
+            
+            return None
+            
+        except (TimeoutException, Exception) as e:
+            logging.warning(f"Could not extract phone from {business_url}: {str(e)}")
+            return None
     
     def extract_phone_and_address_from_business_page(self, business_url):
         """
