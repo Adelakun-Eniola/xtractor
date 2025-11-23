@@ -682,33 +682,34 @@ class GoogleMapsSearchScraper:
             logging.error(f"Unexpected error while extracting businesses: {e}")
             return []
     
-    def extract_phone_from_business_page(self, business_url):
+    def extract_phone_and_address_from_business_page(self, business_url):
         """
-        Extract phone number from a Google Maps business detail page.
-        OPTIMIZED: Faster loading with reduced wait times.
+        Extract phone number and address from a Google Maps business detail page.
+        OPTIMIZED: Extracts both in one page load to save time.
         
         Args:
             business_url: URL of the business detail page
             
         Returns:
-            Phone number string or None if not found
+            Dictionary with 'phone' and 'address' keys (values are None if not found)
         """
+        result = {'phone': None, 'address': None}
+        
         try:
             # Navigate to the business page
             self.driver.get(business_url)
-            # Reduced wait time from 10 to 5 seconds
             WebDriverWait(self.driver, 5).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(1)  # Reduced from 2 to 1 second
+            time.sleep(1)
             
-            # Try multiple selectors for phone number
+            # Extract phone number
             phone_selectors = [
                 "//button[@data-item-id='phone:tel:']//div[contains(@class, 'fontBodyMedium')]",
                 "//button[contains(@aria-label, 'Phone')]//div[contains(@class, 'fontBodyMedium')]",
                 "//a[contains(@href, 'tel:')]",
                 "//button[contains(@data-tooltip, 'Copy phone number')]//div",
-                "//div[contains(@class, 'rogA2c') and contains(., '+')]",  # Container with phone
+                "//div[contains(@class, 'rogA2c') and contains(., '+')]",
             ]
             
             for selector in phone_selectors:
@@ -716,24 +717,44 @@ class GoogleMapsSearchScraper:
                     phone_element = self.driver.find_element(By.XPATH, selector)
                     phone_text = phone_element.text.strip()
                     
-                    # If it's a tel: link, extract from href
                     if not phone_text:
                         href = phone_element.get_attribute("href")
                         if href and 'tel:' in href:
                             phone_text = href.replace("tel:", "").strip()
                     
-                    # Validate phone number format
                     if phone_text and len(phone_text) > 5:
-                        return phone_text
+                        result['phone'] = phone_text
+                        break
                         
                 except NoSuchElementException:
                     continue
             
-            return None
+            # Extract address
+            address_selectors = [
+                "//button[@data-item-id='address']//div[contains(@class, 'fontBodyMedium')]",
+                "//button[contains(@aria-label, 'Address')]//div[contains(@class, 'fontBodyMedium')]",
+                "//div[@data-tooltip='Copy address']",
+                "//button[contains(@data-tooltip, 'Copy address')]//div",
+                "//div[contains(@class, 'rogA2c')]",  # Address container
+            ]
+            
+            for selector in address_selectors:
+                try:
+                    address_element = self.driver.find_element(By.XPATH, selector)
+                    address_text = address_element.text.strip()
+                    
+                    if address_text and len(address_text) > 5:
+                        result['address'] = address_text
+                        break
+                        
+                except NoSuchElementException:
+                    continue
+            
+            return result
             
         except (TimeoutException, Exception) as e:
-            logging.warning(f"Could not extract phone from {business_url}: {str(e)}")
-            return None
+            logging.warning(f"Could not extract data from {business_url}: {str(e)}")
+            return result
     
     def scrape_all_businesses(self, user_id):
         """

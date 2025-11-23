@@ -263,19 +263,21 @@ def search_businesses():
                                 'url': business['url']
                             }
                             
-                            # Extract phone
+                            # Extract phone and address
                             if business.get('phone'):
                                 business_info['phone'] = business['phone']
                                 logging.info(f"Business {i}/{total}: {business['name']} - Phone from listing: {business['phone']}")
                             else:
-                                logging.info(f"Extracting phone for business {i}/{total}: {business['name']}")
+                                logging.info(f"Extracting phone and address for business {i}/{total}: {business['name']}")
                                 try:
-                                    phone = search_scraper.extract_phone_from_business_page(business['url'])
-                                    business_info['phone'] = phone if phone else 'N/A'
-                                    logging.info(f"Business {i}/{total}: {business['name']} - Phone: {business_info['phone']}")
-                                except Exception as phone_error:
-                                    logging.error(f"Error extracting phone for {business['name']}: {str(phone_error)}")
+                                    data = search_scraper.extract_phone_and_address_from_business_page(business['url'])
+                                    business_info['phone'] = data['phone'] if data['phone'] else 'N/A'
+                                    business_info['address'] = data['address'] if data['address'] else 'N/A'
+                                    logging.info(f"Business {i}/{total}: {business['name']} - Phone: {business_info['phone']}, Address: {business_info['address']}")
+                                except Exception as extract_error:
+                                    logging.error(f"Error extracting data for {business['name']}: {str(extract_error)}")
                                     business_info['phone'] = 'N/A'
+                                    business_info['address'] = 'N/A'
                             
                             # Send this business immediately
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
