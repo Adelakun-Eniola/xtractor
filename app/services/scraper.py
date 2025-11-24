@@ -756,6 +756,49 @@ class GoogleMapsSearchScraper:
             logging.warning(f"Could not extract phone from {business_url}: {str(e)}")
             return None
     
+    def extract_address_from_business_page(self, business_url):
+        """
+        Extract address from a Google Maps business detail page.
+        
+        Args:
+            business_url: URL of the business detail page
+            
+        Returns:
+            Address string or None if not found
+        """
+        try:
+            self.driver.get(business_url)
+            WebDriverWait(self.driver, 5).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            time.sleep(1)
+            
+            # Extract address
+            address_selectors = [
+                "//button[@data-item-id='address']//div[contains(@class, 'fontBodyMedium')]",
+                "//button[contains(@aria-label, 'Address')]//div[contains(@class, 'fontBodyMedium')]",
+                "//div[@data-tooltip='Copy address']",
+                "//button[contains(@data-tooltip, 'Copy address')]//div",
+                "//div[contains(@class, 'rogA2c')]",  # Address container
+            ]
+            
+            for selector in address_selectors:
+                try:
+                    address_element = self.driver.find_element(By.XPATH, selector)
+                    address_text = address_element.text.strip()
+                    
+                    if address_text and len(address_text) > 5:
+                        return address_text
+                        
+                except NoSuchElementException:
+                    continue
+            
+            return None
+            
+        except (TimeoutException, Exception) as e:
+            logging.warning(f"Could not extract address from {business_url}: {str(e)}")
+            return None
+
     def extract_phone_and_address_from_business_page(self, business_url):
         """
         Extract phone number and address from a Google Maps business detail page.

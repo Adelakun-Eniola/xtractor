@@ -582,3 +582,210 @@ def batch_extract():
         'results': results,
         'errors': errors
     }), 200
+@scraper_bp.route('/search-addresses', methods=['POST'])
+@jwt_required()
+def search_addresses():
+    """Get addresses for businesses from Google Maps search URL"""
+    search_scraper = None
+    try:
+        user_id = int(get_jwt_identity())
+        data = request.get_json()
+        url = data.get('url')
+        stream = data.get('stream', False)  # Enable streaming
+        
+        logging.info(f"Search addresses endpoint called by user {user_id} with URL: {url}, stream: {stream}")
+        
+        # If streaming is requested, use SSE
+        if stream:
+            from flask import Response
+            import json
+            
+            def generate():
+                """Generator function for Server-Sent Events"""
+                search_scraper = None
+                try:
+                    # Send initial status
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Starting address extraction...'})}\n\n"
+                    
+                    # Check URL
+                    if not url:
+                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL is required'})}\n\n"
+                        return
+                    
+                    if not is_google_maps_search_url(url):
+                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL must be a Google Maps search URL'})}\n\n"
+                        return
+                    
+                    # Create scraper
+                    search_scraper = GoogleMapsSearchScraper(url)
+                    search_scraper.driver = search_scraper.setup_driver()
+                    
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Extracting businesses...'})}\n\n"
+                    
+                    # Get all businesses first
+                    businesses_data = search_scraper.extract_businesses_with_names()
+                    
+                    if not businesses_data:
+                        yield f"data: {json.dumps({'type': 'complete', 'message': 'No businesses found', 'total': 0})}\n\n"
+                        return
+                    
+                    total = len(businesses_data)
+                    yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting addresses...', 'total': total})}\n\n"
+                    
+                    # Stream each business with address
+                    for i, business in enumerate(businesses_data, 1):
+                        try:
+                            business_info = {
+                                'index': i,
+                                'name': business['name'],
+                                'url': business['url']
+                            }
+                            
+                            # Extract address
+                            logging.info(f"Extracting address for business {i}/{total}: {business['name']}")
+                            try:
+                                address = search_scraper.extract_address_from_business_page(business['url'])
+                                business_info['address'] = address if address else 'N/A'
+                                logging.info(f"Business {i}/{total}: {business['name']} - Address: {business_info['address']}")
+                            except Exception as extract_error:
+                                logging.error(f"Error extracting address for {business['name']}: {str(extract_error)}")
+                                business_info['address'] = 'N/A'
+                            
+                            # Send this business immediately
+                            yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
+                            
+                            # Memory optimization: Restart driver after EVERY business to free memory (Render 512MB limit)
+                            if i < total:
+                                logging.info(f"Restarting driver after business {i} to free memory")
+                                try:
+                                    search_scraper.driver.quit()
+                                    import time
+                                    time.sleep(1)  # Wait for cleanup
+                                    search_scraper.driver = search_scraper.setup_driver()
+                                    logging.info("Driver restarted successfully")
+                                except Exception as restart_error:
+                                    logging.error(f"Error restarting driver: {str(restart_error)}")
+                            
+                        except Exception as business_error:
+                            logging.error(f"Error processing business {i}/{total}: {str(business_error)}")
+                            # Send error for this business but continue
+                            yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'address': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
+                            continue
+                    
+                    # Send completion
+                    yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses', 'total': total})}\n\n"
+                    
+                except Exception as e:
+                    logging.error(f"Error in address streaming: {str(e)}")
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+                finally:
+                    if search_scraper and search_scraper.driver:
+                        try:
+                            search_scraper.driver.quit()
+                        except:
+                            pass
+            
+            response = Response(generate(), mimetype='text/event-stream')
+            response.headers['Cache-Control'] = 'no-cache'
+            response.headers['X-Accel-Buffering'] = 'no'
+            return response
+        
+        # Non-streaming version (if needed)
+        return jsonify({'error': 'Non-streaming address extraction not implemented'}), 400
+                
+    except Exception as e:
+        logging.error(f"Unexpected error in search_addresses: {str(e)}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Try to close driver if it exists
+        if search_scraper and hasattr(search_scraper, 'driver') and search_scraper.driver:
+            try:
+                search_scraper.driver.quit()
+            except:
+                pass
+        
+        return jsonify({
+            'error': 'Failed to search addresses',
+            'details': str(e)
+        }), 500
+
+@scraper_bp.route('/test-addresses', methods=['POST'])
+def test_address_extraction():
+    """Test endpoint for address extraction without authentication (for debugging)"""
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        
+        logging.info(f"Test address endpoint called with URL: {url}")
+        
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+        
+        # Check if it's a Google Maps search URL
+        if not is_google_maps_search_url(url):
+            return jsonify({'error': 'URL must be a Google Maps search URL'}), 400
+        
+        # Extract businesses with addresses from search results
+        search_scraper = GoogleMapsSearchScraper(url)
+        
+        try:
+            search_scraper.driver = search_scraper.setup_driver()
+            businesses_data = search_scraper.extract_businesses_with_names()
+            
+            if not businesses_data:
+                return jsonify({
+                    'message': 'No businesses found',
+                    'count': 0,
+                    'businesses': []
+                }), 200
+            
+            # Extract addresses for first 3 businesses (for testing)
+            businesses = []
+            for i, business in enumerate(businesses_data[:3]):  # Limit to 3 for testing
+                business_info = {
+                    'index': i+1,
+                    'name': business['name'],
+                    'url': business['url']
+                }
+                
+                # Extract address
+                logging.info(f"Extracting address for business {i+1}: {business['name']}")
+                try:
+                    address = search_scraper.extract_address_from_business_page(business['url'])
+                    business_info['address'] = address if address else 'N/A'
+                    logging.info(f"Address extracted: {business_info['address']}")
+                except Exception as extract_error:
+                    logging.error(f"Error extracting address: {str(extract_error)}")
+                    business_info['address'] = 'N/A'
+                
+                businesses.append(business_info)
+                
+                # Restart driver to free memory
+                if i < 2:  # Don't restart after the last one
+                    try:
+                        search_scraper.driver.quit()
+                        import time
+                        time.sleep(1)
+                        search_scraper.driver = search_scraper.setup_driver()
+                    except Exception as restart_error:
+                        logging.error(f"Error restarting driver: {str(restart_error)}")
+            
+            logging.info(f"Test address extraction found {len(businesses)} businesses")
+            
+            return jsonify({
+                'message': f'Found {len(businesses)} businesses with addresses (limited to 3 for testing)',
+                'count': len(businesses),
+                'businesses': businesses
+            }), 200
+            
+        finally:
+            if search_scraper and search_scraper.driver:
+                search_scraper.driver.quit()
+                
+    except Exception as e:
+        logging.error(f"Error in test address extraction: {str(e)}")
+        return jsonify({
+            'error': 'Failed to extract addresses',
+            'details': str(e)
+        }), 500
