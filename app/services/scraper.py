@@ -494,8 +494,17 @@ class GoogleMapsSearchScraper:
             WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(3)  # Allow page to fully load
-            logging.info("Search results page loaded successfully")
+            time.sleep(5)  # Allow page to fully load (increased from 3 to 5 seconds)
+            
+            # Wait for Google Maps to load results
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    lambda driver: len(driver.find_elements(By.XPATH, "//a[contains(@href, '/maps/place/')]")) > 0
+                )
+                logging.info("Search results page loaded successfully with business links")
+            except:
+                logging.warning("No business links found after waiting, but continuing anyway")
+                logging.info("Search results page loaded (no business links detected yet)")
             
             # Scroll to load more results
             self.scroll_results_panel()
@@ -509,6 +518,8 @@ class GoogleMapsSearchScraper:
                 "//div[contains(@class, 'Nv2PK')]",  # Common container class
                 "//div[contains(@class, 'THOPZb')]",  # Alternative container
                 "//div[@role='article']",  # Role-based selector
+                "//div[contains(@class, 'lI9IFe')]",  # Another container class
+                "//div[contains(@class, 'VkpGBb')]",  # Yet another container
                 "//a[contains(@href, '/maps/place/')]/..",  # Parent of link
             ]
             
@@ -524,12 +535,30 @@ class GoogleMapsSearchScraper:
             
             if not business_containers:
                 logging.error("No business containers found with any selector")
-                # Last resort: try to get just the links
+                # Last resort: try to get just the links directly
                 try:
                     links = self.driver.find_elements(By.XPATH, "//a[contains(@href, '/maps/place/')]")
                     logging.info(f"Fallback: Found {len(links)} business links directly")
-                    # Create pseudo-containers from links
-                    business_containers = links
+                    if links:
+                        # Create pseudo-containers from links
+                        business_containers = links
+                    else:
+                        # Try even more generic selectors
+                        generic_selectors = [
+                            "//div[contains(@aria-label, 'Results')]//div",
+                            "//div[@role='feed']//div",
+                            "//div[contains(@class, 'section-result')]",
+                        ]
+                        for generic_selector in generic_selectors:
+                            try:
+                                containers = self.driver.find_elements(By.XPATH, generic_selector)
+                                if containers:
+                                    logging.info(f"Generic fallback found {len(containers)} containers with: {generic_selector}")
+                                    business_containers = containers
+                                    break
+                            except Exception as e:
+                                logging.warning(f"Generic selector {generic_selector} failed: {e}")
+                                continue
                 except Exception as e:
                     logging.error(f"Even fallback link extraction failed: {e}")
                     return []
@@ -545,9 +574,34 @@ class GoogleMapsSearchScraper:
                         link_element = container
                         href = link_element.get_attribute("href")
                     else:
-                        # Find the link element within this container
-                        link_element = container.find_element(By.XPATH, ".//a[contains(@href, '/maps/place/')]")
-                        href = link_element.get_attribute("href")
+                        # Try multiple ways to find the link within container
+                        link_element = None
+                        href = None
+                        
+                        link_selectors = [
+                            ".//a[contains(@href, '/maps/place/')]",
+                            ".//a[contains(@href, 'maps/place')]",
+                            ".//a[contains(@data-value, 'feature')]",
+                            ".//a[@role='button']",
+                        ]
+                        
+                        for link_selector in link_selectors:
+                            try:
+                                link_element = container.find_element(By.XPATH, link_selector)
+                                href = link_element.get_attribute("href")
+                                if href and '/maps/place/' in href:
+                                    break
+                            except NoSuchElementException:
+                                continue
+                        
+                        # If still no link found, try data attributes
+                        if not href:
+                            try:
+                                data_fid = container.get_attribute("data-fid")
+                                if data_fid:
+                                    href = f"https://www.google.com/maps/place/?ftid={data_fid}"
+                            except:
+                                pass
                     
                     if not href or '/maps/place/' not in href:
                         continue
