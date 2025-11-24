@@ -25,6 +25,65 @@ def health_check():
         'chromedriver_path': os.getenv('CHROMEDRIVER_PATH', 'Not set')
     }), 200
 
+@scraper_bp.route('/test-search', methods=['POST'])
+def test_search_businesses():
+    """Test endpoint for business search without authentication (for debugging)"""
+    try:
+        data = request.get_json()
+        url = data.get('url')
+        
+        logging.info(f"Test search endpoint called with URL: {url}")
+        
+        if not url:
+            return jsonify({'error': 'URL is required'}), 400
+        
+        # Check if it's a Google Maps search URL
+        if not is_google_maps_search_url(url):
+            return jsonify({'error': 'URL must be a Google Maps search URL'}), 400
+        
+        # Extract businesses with names from search results
+        search_scraper = GoogleMapsSearchScraper(url)
+        
+        try:
+            search_scraper.driver = search_scraper.setup_driver()
+            businesses_data = search_scraper.extract_businesses_with_names()
+            
+            if not businesses_data:
+                return jsonify({
+                    'message': 'No businesses found',
+                    'count': 0,
+                    'businesses': []
+                }), 200
+            
+            # Add index to each business
+            businesses = []
+            for i, business in enumerate(businesses_data):
+                business_info = {
+                    'index': i+1,
+                    'name': business['name'],
+                    'url': business['url']
+                }
+                businesses.append(business_info)
+            
+            logging.info(f"Test search found {len(businesses)} businesses")
+            
+            return jsonify({
+                'message': f'Found {len(businesses)} businesses',
+                'count': len(businesses),
+                'businesses': businesses
+            }), 200
+            
+        finally:
+            if search_scraper and search_scraper.driver:
+                search_scraper.driver.quit()
+                
+    except Exception as e:
+        logging.error(f"Error in test search: {str(e)}")
+        return jsonify({
+            'error': 'Failed to search businesses',
+            'details': str(e)
+        }), 500
+
 @scraper_bp.route('/extract', methods=['POST'])
 @jwt_required()
 def extract_data():
@@ -213,6 +272,7 @@ def search_businesses():
         data = request.get_json()
         url = data.get('url')
         include_phone = data.get('include_phone', False)  # Optional parameter
+        phone_limit = data.get('phone_limit', 10)  # Limit phone extractions
         stream = data.get('stream', False)  # Enable streaming
         
         logging.info(f"Search businesses endpoint called by user {user_id} with URL: {url}, include_phone: {include_phone}, stream: {stream}")
