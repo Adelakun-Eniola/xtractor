@@ -630,9 +630,9 @@ def search_addresses():
                         return
                     
                     total = len(businesses_data)
-                    yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting addresses...', 'total': total})}\n\n"
+                    yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting addresses and phone numbers...', 'total': total})}\n\n"
                     
-                    # Stream each business with address
+                    # Stream each business with address and phone
                     for i, business in enumerate(businesses_data, 1):
                         try:
                             business_info = {
@@ -641,7 +641,7 @@ def search_addresses():
                                 'url': business['url']
                             }
                             
-                            # Extract address
+                            # Extract address first
                             logging.info(f"Extracting address for business {i}/{total}: {business['name']}")
                             try:
                                 address = search_scraper.extract_address_from_business_page(business['url'])
@@ -651,7 +651,28 @@ def search_addresses():
                                 logging.error(f"Error extracting address for {business['name']}: {str(extract_error)}")
                                 business_info['address'] = 'N/A'
                             
-                            # Send this business immediately
+                            # Restart driver for phone extraction (memory optimization)
+                            logging.info(f"Restarting driver for phone extraction - business {i}/{total}")
+                            try:
+                                search_scraper.driver.quit()
+                                import time
+                                time.sleep(1)  # Wait for cleanup
+                                search_scraper.driver = search_scraper.setup_driver()
+                                logging.info("Driver restarted successfully for phone extraction")
+                            except Exception as restart_error:
+                                logging.error(f"Error restarting driver for phone extraction: {str(restart_error)}")
+                            
+                            # Extract phone number
+                            logging.info(f"Extracting phone for business {i}/{total}: {business['name']}")
+                            try:
+                                phone = search_scraper.extract_phone_from_business_page(business['url'])
+                                business_info['phone'] = phone if phone else 'N/A'
+                                logging.info(f"Business {i}/{total}: {business['name']} - Phone: {business_info['phone']}")
+                            except Exception as extract_error:
+                                logging.error(f"Error extracting phone for {business['name']}: {str(extract_error)}")
+                                business_info['phone'] = 'N/A'
+                            
+                            # Send this business with both address and phone
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
                             # Memory optimization: Restart driver after EVERY business to free memory (Render 512MB limit)
@@ -669,7 +690,7 @@ def search_addresses():
                         except Exception as business_error:
                             logging.error(f"Error processing business {i}/{total}: {str(business_error)}")
                             # Send error for this business but continue
-                            yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'address': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
+                            yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'address': 'N/A', 'phone': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
                             continue
                     
                     # Send completion
@@ -758,6 +779,27 @@ def test_address_extraction():
                 except Exception as extract_error:
                     logging.error(f"Error extracting address: {str(extract_error)}")
                     business_info['address'] = 'N/A'
+                
+                # Restart driver for phone extraction
+                logging.info(f"Restarting driver for phone extraction - business {i+1}")
+                try:
+                    search_scraper.driver.quit()
+                    import time
+                    time.sleep(1)
+                    search_scraper.driver = search_scraper.setup_driver()
+                    logging.info("Driver restarted for phone extraction")
+                except Exception as restart_error:
+                    logging.error(f"Error restarting driver for phone: {str(restart_error)}")
+                
+                # Extract phone
+                logging.info(f"Extracting phone for business {i+1}: {business['name']}")
+                try:
+                    phone = search_scraper.extract_phone_from_business_page(business['url'])
+                    business_info['phone'] = phone if phone else 'N/A'
+                    logging.info(f"Phone extracted: {business_info['phone']}")
+                except Exception as extract_error:
+                    logging.error(f"Error extracting phone: {str(extract_error)}")
+                    business_info['phone'] = 'N/A'
                 
                 businesses.append(business_info)
                 
