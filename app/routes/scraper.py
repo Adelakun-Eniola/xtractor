@@ -630,7 +630,7 @@ def search_addresses():
                         return
                     
                     total = len(businesses_data)
-                    yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting phone numbers, addresses, and websites...', 'total': total})}\n\n"
+                    yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting phone numbers, addresses, websites, and emails...', 'total': total})}\n\n"
                     
                     # Stream each business with address and phone
                     for i, business in enumerate(businesses_data, 1):
@@ -693,7 +693,28 @@ def search_addresses():
                                 logging.error(f"Error extracting website for {business['name']}: {str(extract_error)}")
                                 business_info['website'] = 'N/A'
                             
-                            # Send this business with phone, address, and website
+                            # Restart driver for email extraction (memory optimization)
+                            logging.info(f"Restarting driver for email extraction - business {i}/{total}")
+                            try:
+                                search_scraper.driver.quit()
+                                import time
+                                time.sleep(1)  # Wait for cleanup
+                                search_scraper.driver = search_scraper.setup_driver()
+                                logging.info("Driver restarted successfully for email extraction")
+                            except Exception as restart_error:
+                                logging.error(f"Error restarting driver for email extraction: {str(restart_error)}")
+                            
+                            # Extract email from website
+                            logging.info(f"Extracting email for business {i}/{total}: {business['name']}")
+                            try:
+                                email = search_scraper.extract_email_from_website(business_info['website'])
+                                business_info['email'] = email if email else 'N/A'
+                                logging.info(f"Business {i}/{total}: {business['name']} - Email: {business_info['email']}")
+                            except Exception as extract_error:
+                                logging.error(f"Error extracting email for {business['name']}: {str(extract_error)}")
+                                business_info['email'] = 'N/A'
+                            
+                            # Send this business with phone, address, website, and email
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
                             # Memory optimization: Restart driver after EVERY business to free memory (Render 512MB limit)
@@ -711,7 +732,7 @@ def search_addresses():
                         except Exception as business_error:
                             logging.error(f"Error processing business {i}/{total}: {str(business_error)}")
                             # Send error for this business but continue
-                            yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A', 'address': 'N/A', 'website': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
+                            yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A', 'address': 'N/A', 'website': 'N/A', 'email': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
                             continue
                     
                     # Send completion
@@ -842,6 +863,27 @@ def test_address_extraction():
                 except Exception as extract_error:
                     logging.error(f"Error extracting website: {str(extract_error)}")
                     business_info['website'] = 'N/A'
+                
+                # Restart driver for email extraction
+                logging.info(f"Restarting driver for email extraction - business {i+1}")
+                try:
+                    search_scraper.driver.quit()
+                    import time
+                    time.sleep(1)
+                    search_scraper.driver = search_scraper.setup_driver()
+                    logging.info("Driver restarted for email extraction")
+                except Exception as restart_error:
+                    logging.error(f"Error restarting driver for email: {str(restart_error)}")
+                
+                # Extract email from website
+                logging.info(f"Extracting email for business {i+1}: {business['name']}")
+                try:
+                    email = search_scraper.extract_email_from_website(business_info['website'])
+                    business_info['email'] = email if email else 'N/A'
+                    logging.info(f"Email extracted: {business_info['email']}")
+                except Exception as extract_error:
+                    logging.error(f"Error extracting email: {str(extract_error)}")
+                    business_info['email'] = 'N/A'
                 
                 businesses.append(business_info)
                 

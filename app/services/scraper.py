@@ -756,6 +756,123 @@ class GoogleMapsSearchScraper:
             logging.warning(f"Could not extract phone from {business_url}: {str(e)}")
             return None
     
+    def extract_email_from_website(self, website_url):
+        """
+        Extract email address from a business website.
+        
+        Args:
+            website_url: URL of the business website
+            
+        Returns:
+            Email address string or None if not found
+        """
+        try:
+            # Skip if no website URL
+            if not website_url or website_url == 'N/A':
+                return None
+                
+            logging.info(f"Extracting email from website: {website_url}")
+            
+            self.driver.get(website_url)
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            time.sleep(3)  # Allow page to fully load
+            
+            # Email regex pattern
+            email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+            
+            # Method 1: Look for mailto links
+            try:
+                mailto_links = self.driver.find_elements(By.XPATH, "//a[contains(@href, 'mailto:')]")
+                for link in mailto_links:
+                    href = link.get_attribute("href")
+                    if href and 'mailto:' in href:
+                        email = href.replace("mailto:", "").strip()
+                        # Clean up any additional parameters
+                        if '?' in email:
+                            email = email.split('?')[0]
+                        if re.match(email_pattern, email):
+                            logging.info(f"Found email from mailto link: {email}")
+                            return email
+            except Exception as e:
+                logging.warning(f"Error checking mailto links: {e}")
+            
+            # Method 2: Search page source for email patterns
+            try:
+                page_source = self.driver.page_source
+                emails = re.findall(email_pattern, page_source)
+                
+                # Filter out common non-business emails
+                excluded_domains = [
+                    'example.com', 'test.com', 'gmail.com', 'yahoo.com', 'hotmail.com',
+                    'outlook.com', 'facebook.com', 'twitter.com', 'instagram.com',
+                    'linkedin.com', 'youtube.com', 'google.com', 'microsoft.com',
+                    'apple.com', 'amazon.com', 'noreply', 'no-reply'
+                ]
+                
+                for email in emails:
+                    email = email.lower().strip()
+                    # Skip if it contains excluded domains or patterns
+                    if not any(excluded in email for excluded in excluded_domains):
+                        # Prefer emails that match the website domain
+                        website_domain = website_url.replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0]
+                        if website_domain in email:
+                            logging.info(f"Found matching domain email: {email}")
+                            return email
+                
+                # If no domain match, return the first valid email
+                for email in emails:
+                    email = email.lower().strip()
+                    if not any(excluded in email for excluded in excluded_domains):
+                        logging.info(f"Found email from page source: {email}")
+                        return email
+                        
+            except Exception as e:
+                logging.warning(f"Error searching page source for emails: {e}")
+            
+            # Method 3: Look for common contact page patterns
+            try:
+                contact_links = self.driver.find_elements(By.XPATH, 
+                    "//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'contact') or "
+                    "contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'about') or "
+                    "contains(translate(@href, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'contact')]"
+                )
+                
+                for link in contact_links[:2]:  # Check first 2 contact links
+                    try:
+                        contact_url = link.get_attribute("href")
+                        if contact_url and contact_url.startswith('http'):
+                            logging.info(f"Checking contact page: {contact_url}")
+                            self.driver.get(contact_url)
+                            WebDriverWait(self.driver, 5).until(
+                                EC.presence_of_element_located((By.TAG_NAME, "body"))
+                            )
+                            time.sleep(2)
+                            
+                            # Search for emails on contact page
+                            contact_page_source = self.driver.page_source
+                            contact_emails = re.findall(email_pattern, contact_page_source)
+                            
+                            for email in contact_emails:
+                                email = email.lower().strip()
+                                if not any(excluded in email for excluded in excluded_domains):
+                                    logging.info(f"Found email from contact page: {email}")
+                                    return email
+                                    
+                    except Exception as contact_error:
+                        logging.warning(f"Error checking contact page: {contact_error}")
+                        continue
+                        
+            except Exception as e:
+                logging.warning(f"Error checking contact pages: {e}")
+            
+            return None
+            
+        except (TimeoutException, Exception) as e:
+            logging.warning(f"Could not extract email from {website_url}: {str(e)}")
+            return None
+
     def extract_website_from_business_page(self, business_url):
         """
         Extract website URL from a Google Maps business detail page.
