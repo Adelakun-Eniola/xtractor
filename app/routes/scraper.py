@@ -773,6 +773,101 @@ def search_addresses():
             'details': str(e)
         }), 500
 
+@scraper_bp.route('/sync-data', methods=['POST'])
+@jwt_required()
+def sync_local_data():
+    """Sync local data to server database"""
+    try:
+        user_id = int(get_jwt_identity())
+        data = request.get_json()
+        businesses = data.get('businesses', [])
+        
+        logging.info(f"Sync endpoint called by user {user_id} with {len(businesses)} businesses")
+        
+        if not businesses:
+            return jsonify({'error': 'No businesses provided'}), 400
+        
+        # Verify user exists
+        user = User.query.get(user_id)
+        if not user:
+            logging.warning(f"User {user_id} not found, creating placeholder user")
+            user = User(id=user_id, email=f"user{user_id}@placeholder.com", name=f"User {user_id}", google_id=f"placeholder_{user_id}")
+            db.session.add(user)
+            try:
+                db.session.commit()
+                logging.info(f"Created placeholder user {user_id}")
+            except:
+                db.session.rollback()
+                logging.error(f"Failed to create user {user_id}, but continuing anyway")
+        
+        saved_count = 0
+        errors = []
+        
+        for business in businesses:
+            try:
+                # Check if this business already exists (by company name and website)
+                existing = ScrapedData.query.filter_by(
+                    user_id=user_id,
+                    company_name=business.get('company_name'),
+                    website_url=business.get('website_url', '')
+                ).first()
+                
+                if existing:
+                    logging.info(f"Business already exists: {business.get('company_name')}")
+                    continue
+                
+                # Create new scraped data entry
+                new_data = ScrapedData(
+                    company_name=business.get('company_name'),
+                    email=business.get('email') if business.get('email') not in ['N/A', 'Not found', None] else None,
+                    phone=business.get('phone') if business.get('phone') not in ['N/A', 'Not found', None] else None,
+                    address=business.get('address') if business.get('address') not in ['N/A', 'Not found', None] else None,
+                    website_url=business.get('website_url', ''),
+                    user_id=user_id
+                )
+                
+                # Set created_at if provided
+                if business.get('created_at'):
+                    try:
+                        from datetime import datetime
+                        new_data.created_at = datetime.fromisoformat(business['created_at'].replace('Z', '+00:00'))
+                    except:
+                        pass  # Use default timestamp
+                
+                db.session.add(new_data)
+                saved_count += 1
+                logging.info(f"Added business to sync: {business.get('company_name')}")
+                
+            except Exception as e:
+                error_msg = f"Error syncing business {business.get('company_name', 'Unknown')}: {str(e)}"
+                logging.error(error_msg)
+                errors.append(error_msg)
+        
+        if saved_count > 0:
+            try:
+                db.session.commit()
+                logging.info(f"Successfully synced {saved_count} businesses to database")
+            except Exception as e:
+                db.session.rollback()
+                logging.error(f"Failed to commit synced data: {str(e)}")
+                return jsonify({
+                    'error': 'Failed to save synced data to database',
+                    'details': str(e)
+                }), 500
+        
+        return jsonify({
+            'message': f'Successfully synced {saved_count} businesses to server',
+            'synced_count': saved_count,
+            'errors': errors
+        }), 200
+        
+    except Exception as e:
+        logging.error(f"Error in sync_local_data: {str(e)}")
+        return jsonify({
+            'error': 'Failed to sync data',
+            'details': str(e)
+        }), 500
+
 @scraper_bp.route('/test-addresses', methods=['POST'])
 def test_address_extraction():
     """Test endpoint for address extraction without authentication (for debugging)"""
