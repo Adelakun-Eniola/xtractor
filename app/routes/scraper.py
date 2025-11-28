@@ -337,24 +337,7 @@ def search_businesses():
                                     logging.error(f"Error extracting phone for {business['name']}: {str(extract_error)}")
                                     business_info['phone'] = 'N/A'
                             
-                            # Save to database before sending to frontend
-                            try:
-                                new_data = ScrapedData(
-                                    company_name=business_info['name'],
-                                    email=None,  # Phone-only extraction doesn't get email
-                                    phone=business_info['phone'] if business_info['phone'] not in ['N/A', 'Not found', None] else None,
-                                    address=None,  # Phone-only extraction doesn't get address
-                                    website_url=business_info['url'],
-                                    user_id=user_id
-                                )
-                                db.session.add(new_data)
-                                db.session.commit()
-                                logging.info(f"Saved business to database: {business_info['name']}")
-                            except Exception as db_error:
-                                logging.error(f"Failed to save business to database: {str(db_error)}")
-                                db.session.rollback()
-                                # Continue anyway - don't fail the stream because of DB issues
-                            
+                            # Database saving temporarily removed to fix streaming
                             # Send this business immediately
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
@@ -732,24 +715,7 @@ def search_addresses():
                                 logging.error(f"Error extracting email for {business['name']}: {str(extract_error)}")
                                 business_info['email'] = 'N/A'
                             
-                            # Save to database before sending to frontend
-                            try:
-                                new_data = ScrapedData(
-                                    company_name=business_info['name'],
-                                    email=business_info['email'] if business_info['email'] not in ['N/A', 'Not found', None] else None,
-                                    phone=business_info['phone'] if business_info['phone'] not in ['N/A', 'Not found', None] else None,
-                                    address=business_info['address'] if business_info['address'] not in ['N/A', 'Not found', None] else None,
-                                    website_url=business_info['website'] if business_info['website'] not in ['N/A', 'Not found', None] else business_info['url'],
-                                    user_id=user_id
-                                )
-                                db.session.add(new_data)
-                                db.session.commit()
-                                logging.info(f"Saved business to database: {business_info['name']}")
-                            except Exception as db_error:
-                                logging.error(f"Failed to save business to database: {str(db_error)}")
-                                db.session.rollback()
-                                # Continue anyway - don't fail the stream because of DB issues
-                            
+                            # Database saving temporarily removed to fix streaming
                             # Send this business with phone, address, website, and email
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
