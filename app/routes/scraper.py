@@ -314,6 +314,9 @@ def search_businesses():
                     total = len(businesses_data)
                     yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting phone numbers...', 'total': total})}\n\n"
                     
+                    # Collect businesses for database saving
+                    extracted_businesses = []
+                    
                     # Stream each business with phone
                     for i, business in enumerate(businesses_data, 1):
                         try:
@@ -337,7 +340,14 @@ def search_businesses():
                                     logging.error(f"Error extracting phone for {business['name']}: {str(extract_error)}")
                                     business_info['phone'] = 'N/A'
                             
-                            # Database saving temporarily removed to fix streaming
+                            # Collect for database saving
+                            extracted_businesses.append({
+                                'company_name': business_info['name'],
+                                'phone': business_info['phone'] if business_info['phone'] not in ['N/A', 'Not found'] else None,
+                                'website_url': business_info['url'],
+                                'user_id': user_id
+                            })
+                            
                             # Send this business immediately
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
@@ -359,8 +369,39 @@ def search_businesses():
                             yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
                             continue
                     
+                    # Save all businesses to database in batch
+                    saved_count = 0
+                    if extracted_businesses:
+                        try:
+                            for business_data in extracted_businesses:
+                                try:
+                                    # Check if business already exists
+                                    existing = ScrapedData.query.filter_by(
+                                        user_id=user_id,
+                                        company_name=business_data['company_name'],
+                                        website_url=business_data['website_url']
+                                    ).first()
+                                    
+                                    if not existing:
+                                        new_data = ScrapedData(**business_data)
+                                        db.session.add(new_data)
+                                        saved_count += 1
+                                except Exception as e:
+                                    logging.error(f"Error adding business to database: {e}")
+                                    continue
+                            
+                            if saved_count > 0:
+                                db.session.commit()
+                                logging.info(f"Successfully saved {saved_count} businesses to database")
+                            else:
+                                logging.info("No new businesses to save (all already exist)")
+                                
+                        except Exception as e:
+                            logging.error(f"Database batch save failed: {e}")
+                            db.session.rollback()
+                    
                     # Send completion
-                    yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses', 'total': total})}\n\n"
+                    yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses (saved {saved_count} to database)', 'total': total})}\n\n"
                     
                 except Exception as e:
                     logging.error(f"Error in streaming: {str(e)}")
@@ -633,6 +674,9 @@ def search_addresses():
                     total = len(businesses_data)
                     yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting phone numbers, addresses, websites, and emails...', 'total': total})}\n\n"
                     
+                    # Collect businesses for database saving
+                    extracted_businesses = []
+                    
                     # Stream each business with address and phone
                     for i, business in enumerate(businesses_data, 1):
                         try:
@@ -715,7 +759,16 @@ def search_addresses():
                                 logging.error(f"Error extracting email for {business['name']}: {str(extract_error)}")
                                 business_info['email'] = 'N/A'
                             
-                            # Database saving temporarily removed to fix streaming
+                            # Collect for database saving
+                            extracted_businesses.append({
+                                'company_name': business_info['name'],
+                                'email': business_info['email'] if business_info['email'] not in ['N/A', 'Not found'] else None,
+                                'phone': business_info['phone'] if business_info['phone'] not in ['N/A', 'Not found'] else None,
+                                'address': business_info['address'] if business_info['address'] not in ['N/A', 'Not found'] else None,
+                                'website_url': business_info['website'] if business_info['website'] not in ['N/A', 'Not found'] else business_info['url'],
+                                'user_id': user_id
+                            })
+                            
                             # Send this business with phone, address, website, and email
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
@@ -737,8 +790,39 @@ def search_addresses():
                             yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A', 'address': 'N/A', 'website': 'N/A', 'email': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
                             continue
                     
+                    # Save all businesses to database in batch
+                    saved_count = 0
+                    if extracted_businesses:
+                        try:
+                            for business_data in extracted_businesses:
+                                try:
+                                    # Check if business already exists
+                                    existing = ScrapedData.query.filter_by(
+                                        user_id=user_id,
+                                        company_name=business_data['company_name'],
+                                        website_url=business_data['website_url']
+                                    ).first()
+                                    
+                                    if not existing:
+                                        new_data = ScrapedData(**business_data)
+                                        db.session.add(new_data)
+                                        saved_count += 1
+                                except Exception as e:
+                                    logging.error(f"Error adding business to database: {e}")
+                                    continue
+                            
+                            if saved_count > 0:
+                                db.session.commit()
+                                logging.info(f"Successfully saved {saved_count} businesses to database")
+                            else:
+                                logging.info("No new businesses to save (all already exist)")
+                                
+                        except Exception as e:
+                            logging.error(f"Database batch save failed: {e}")
+                            db.session.rollback()
+                    
                     # Send completion
-                    yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses', 'total': total})}\n\n"
+                    yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses (saved {saved_count} to database)', 'total': total})}\n\n"
                     
                 except Exception as e:
                     logging.error(f"Error in address streaming: {str(e)}")
