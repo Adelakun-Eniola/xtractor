@@ -56,9 +56,11 @@ def create_app():
     from app.routes.auth import auth_bp
     from app.routes.scraper import scraper_bp
     from app.routes.dashboard import dashboard_bp
+    from app.routes.debug import debug_bp
     
     app.register_blueprint(auth_bp)
     app.register_blueprint(scraper_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(debug_bp)
     
     return app
