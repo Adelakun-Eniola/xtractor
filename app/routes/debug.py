@@ -79,7 +79,7 @@ def user_data(user_id):
             'error': str(e)
         }), 500
 
-@debug_bp.route('/test-save', methods=['POST'])
+@debug_bp.route('/test-save', methods=['GET'])
 def test_save():
     """Test saving data to database"""
     try:
