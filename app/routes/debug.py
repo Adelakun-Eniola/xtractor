@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models.scraped_data import ScrapedData
 from app.models.user import User
@@ -106,5 +107,28 @@ def test_save():
         db.session.rollback()
         return jsonify({
             'status': 'error',
+            'error': str(e)
+        }), 500
+
+@debug_bp.route('/check-auth', methods=['GET'])
+@jwt_required()
+def check_auth():
+    """Check current user authentication"""
+    try:
+        user_id = int(get_jwt_identity())
+        
+        # Check if user exists
+        user = User.query.get(user_id)
+        
+        return jsonify({
+            'authenticated': True,
+            'user_id': user_id,
+            'user_exists': user is not None,
+            'user_email': user.email if user else None
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'authenticated': False,
             'error': str(e)
         }), 500
