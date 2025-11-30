@@ -80,27 +80,17 @@ def user_data(user_id):
             'error': str(e)
         }), 500
 
-@debug_bp.route('/test-save', methods=['GET'])
-def test_save():
-    """Test saving data to database"""
+@debug_bp.route('/clear-test-data', methods=['GET'])
+def clear_test_data():
+    """Clear test data from database"""
     try:
-        # Create a test business record
-        test_business = ScrapedData(
-            company_name="Test Hospital",
-            email="test@hospital.com",
-            phone="+1-555-123-4567",
-            address="123 Test Street, Test City",
-            website_url="https://testhospital.com",
-            user_id=1
-        )
-        
-        db.session.add(test_business)
+        # Delete test entries
+        ScrapedData.query.filter_by(company_name="Test Hospital").delete()
         db.session.commit()
         
         return jsonify({
             'status': 'success',
-            'message': 'Test business saved successfully',
-            'business_id': test_business.id
+            'message': 'Test data cleared'
         }), 200
         
     except Exception as e:
