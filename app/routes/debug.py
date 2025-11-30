@@ -13,6 +13,16 @@ def db_status():
         with db.engine.connect() as conn:
             result = conn.execute(db.text("SELECT version();"))
             db_version = result.fetchone()[0]
+            
+            # Check if tables exist
+            tables_result = conn.execute(db.text("""
+                SELECT table_name FROM information_schema.tables 
+                WHERE table_schema = 'public'
+            """))
+            tables = [row[0] for row in tables_result.fetchall()]
+        
+        # Try to create tables if they don't exist
+        db.create_all()
         
         # Count records
         total_scraped = ScrapedData.query.count()
@@ -24,6 +34,7 @@ def db_status():
         return jsonify({
             'status': 'connected',
             'database_version': db_version,
+            'tables': tables,
             'total_scraped_data': total_scraped,
             'total_users': total_users,
             'recent_scraped': [
