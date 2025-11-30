@@ -78,3 +78,33 @@ def user_data(user_id):
         return jsonify({
             'error': str(e)
         }), 500
+
+@debug_bp.route('/test-save', methods=['POST'])
+def test_save():
+    """Test saving data to database"""
+    try:
+        # Create a test business record
+        test_business = ScrapedData(
+            company_name="Test Hospital",
+            email="test@hospital.com",
+            phone="+1-555-123-4567",
+            address="123 Test Street, Test City",
+            website_url="https://testhospital.com",
+            user_id=1
+        )
+        
+        db.session.add(test_business)
+        db.session.commit()
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Test business saved successfully',
+            'business_id': test_business.id
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
