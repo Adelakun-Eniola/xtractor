@@ -905,6 +905,9 @@ class GoogleMapsSearchScraper:
                 "//a[contains(@href, '.net')]",
                 "//a[contains(@href, '.gov')]",
                 "//a[contains(@href, '.edu')]",
+                "//a[contains(@href, '.com.au')]",
+                "//a[contains(@href, '.co.uk')]",
+                "//a[contains(@href, '.au')]",
             ]
             
             for selector in website_selectors:
@@ -915,8 +918,12 @@ class GoogleMapsSearchScraper:
                         if href:
                             # Make sure it's not a Google URL
                             if 'google.com' not in href and 'goo.gl' not in href and 'maps' not in href:
-                                # Check if it contains common domain extensions
-                                domain_extensions = ['.com', '.ca', '.org', '.net', '.gov', '.edu', '.co', '.io', '.biz', '.info']
+                                # Check if it contains common domain extensions (including country-code TLDs)
+                                domain_extensions = [
+                                    '.com', '.ca', '.org', '.net', '.gov', '.edu', '.co', '.io', '.biz', '.info',
+                                    '.com.au', '.co.uk', '.co.nz', '.com.sg', '.co.za', '.com.br', '.com.mx',
+                                    '.au', '.uk', '.nz', '.de', '.fr', '.jp', '.cn', '.in', '.us'
+                                ]
                                 for ext in domain_extensions:
                                     if ext in href.lower():
                                         logging.info(f"Found website URL: {href}")
@@ -925,9 +932,9 @@ class GoogleMapsSearchScraper:
                         # Also check element text for domain patterns
                         text = element.text.strip()
                         if text:
-                            # Look for domain patterns in text (like "ahs.ca")
+                            # Look for domain patterns in text (like "ahs.ca" or "example.com.au")
                             import re
-                            domain_pattern = r'\b(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}\b'
+                            domain_pattern = r'\b(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?\b'
                             matches = re.findall(domain_pattern, text)
                             for match in matches:
                                 if not any(skip in match.lower() for skip in ['google', 'maps', 'goo.gl']):
@@ -946,8 +953,8 @@ class GoogleMapsSearchScraper:
             try:
                 page_source = self.driver.page_source
                 import re
-                # Look for domain patterns in the entire page
-                domain_pattern = r'\b(?:www\.)?[a-zA-Z0-9-]+\.(?:com|ca|org|net|gov|edu|co|io|biz|info)\b'
+                # Look for domain patterns in the entire page (including country-code TLDs like .com.au)
+                domain_pattern = r'\b(?:www\.)?[a-zA-Z0-9-]+\.(?:com|ca|org|net|gov|edu|co|io|biz|info|au|uk|nz|de|fr)(?:\.(?:au|uk|nz|sg|za|br|mx))?\b'
                 matches = re.findall(domain_pattern, page_source, re.IGNORECASE)
                 
                 for match in matches:
