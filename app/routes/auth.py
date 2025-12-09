@@ -56,8 +56,22 @@ def google_auth():
                 raise ValueError("Token could not be verified with any allowed client ID")
 
             logger.debug(f"User info: {idinfo}")
-            logger.debug(f"Token expiration: {datetime.utcfromtimestamp(idinfo['exp'])} UTC")
+            if not idinfo:
+                logger.error("Google returned no user info (idinfo is None)")
+                return jsonify({'error': 'Failed to verify Google token'}), 401
 
+            logger.debug(f"User info: {idinfo}")
+
+            exp = idinfo.get('exp')
+            if exp:
+                logger.debug(f"Token expiration: {datetime.utcfromtimestamp(exp)} UTC")
+            else:
+                logger.error("Google token missing 'exp' field")
+
+
+
+
+            
             google_id = idinfo['sub']
             email = idinfo['email']
             name = idinfo.get('name', '')
