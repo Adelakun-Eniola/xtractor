@@ -1,89 +1,18 @@
-# from flask import Blueprint, request, jsonify, redirect, url_for
-# from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
-# from google.oauth2 import id_token
-# from google.auth.transport import requests as google_requests
-# import os
-# from app import db
-# from app.models.user import User
-
-# auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
-
-# @auth_bp.route('/google', methods=['POST'])
-# def google_auth():
-#     """Handle Google authentication"""
-#     try:
-#         token = request.json.get('token')
-        
-#         # Verify the token
-#         idinfo = id_token.verify_oauth2_token(
-#             token, 
-#             google_requests.Request(), 
-#             os.getenv('GOOGLE_CLIENT_ID')
-#         )
-        
-#         # Get user info
-#         google_id = idinfo['sub']
-#         email = idinfo['email']
-#         name = idinfo.get('name', '')
-        
-#         # Check if user exists
-#         user = User.query.filter_by(google_id=google_id).first()
-        
-#         if not user:
-#             # Create new user
-#             user = User(
-#                 email=email,
-#                 name=name,
-#                 google_id=google_id
-#             )
-#             db.session.add(user)
-#             db.session.commit()
-        
-#         # Create access token
-#         access_token = create_access_token(identity=user.id)
-        
-#         return jsonify({
-#             'access_token': access_token,
-#             'user': {
-#                 'id': user.id,
-#                 'email': user.email,
-#                 'name': user.name
-#             }
-#         }), 200
-        
-#     except Exception as e:
-#         return jsonify({'error': str(e)}), 400
-
-# @auth_bp.route('/me', methods=['GET'])
-# @jwt_required()
-# def get_user():
-#     """Get current user info"""
-#     user_id = get_jwt_identity()
-#     user = User.query.get(user_id)
-    
-#     if not user:
-#         return jsonify({'error': 'User not found'}), 404
-    
-#     return jsonify({
-#         'id': user.id,
-#         'email': user.email,
-#         'name': user.name
-#     }), 200
-from flask import Blueprint, request, jsonify, session
-from flask_jwt_extended import create_access_token
+from flask import Blueprint, request, jsonify
+from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from google.auth.exceptions import InvalidValue, MalformedError
 import os
 import logging
 from datetime import datetime
-from app import db
-from app.models.user import User
+from app.models.user import User  # MongoDB User model
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+
 @auth_bp.route('/google', methods=['POST'])
 def google_auth():
     logger.debug("### /api/auth/google endpoint hit ###")
@@ -133,19 +62,40 @@ def google_auth():
             email = idinfo['email']
             name = idinfo.get('name', '')
 
-            user = User.query.filter_by(google_id=google_id).first()
+            # Check if user exists in MongoDB
+            user = User.find_by_google_id(google_id)
             if not user:
-                user = User(email=email, name=name, google_id=google_id)
-                db.session.add(user)
-                db.session.commit()
+                # Try by email as fallback
+                user = User.find_by_email(email)
+                if not user:
+                    # Create new user in MongoDB
+                    user_data = User.create(
+                        email=email,
+                        password=None,  # Google auth users don't need password
+                        name=name,
+                        google_id=google_id
+                    )
+                    logger.info(f"Created new user in MongoDB: {email}")
+                else:
+                    # Update existing user with google_id
+                    User.update_google_id(user['_id'], google_id)
+                    user['google_id'] = google_id
+                    logger.info(f"Updated existing user with Google ID: {email}")
+            else:
+                logger.info(f"Found existing user: {email}")
 
-            # Create access token with string identity
-            access_token = create_access_token(identity=str(user.id))  # Ensure string
-            logger.debug(f"Generated JWT with identity: {str(user.id)}")
+            # Create access token with MongoDB user ID (string)
+            access_token = create_access_token(identity=str(user['_id']))
+            logger.debug(f"Generated JWT with identity: {str(user['_id'])}")
 
             return jsonify({
                 'access_token': access_token,
-                'user': {'id': user.id, 'email': user.email, 'name': user.name}
+                'user': {
+                    'id': user['_id'],
+                    'email': user['email'],
+                    'name': user['name'],
+                    'google_id': user.get('google_id')
+                }
             }), 200
 
         except ValueError as e:
@@ -162,12 +112,41 @@ def google_auth():
         logger.error(f"Unexpected error in google_auth: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@auth_bp.route('/me', methods=['GET'])
+@jwt_required()
+def get_user():
+    """Get current user info"""
+    user_id = get_jwt_identity()  # MongoDB user ID (string)
+    
+    # Find user in MongoDB
+    user = User.find_by_id(user_id)
+    
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify({
+        'id': user['_id'],
+        'email': user['email'],
+        'name': user['name'],
+        'google_id': user.get('google_id')
+    }), 200
 
-# @auth_bp.route('/check', methods=['GET'])
-# @jwt_required()
-# def check_token():
-#     user_id = int(get_jwt_identity())
-#     user = User.query.get(user_id)
-#     if not user:
-#         return jsonify({'error': 'User not found'}), 404
-#     return jsonify({'message': 'Token is valid'}), 200
+@auth_bp.route('/check', methods=['GET'])
+@jwt_required()
+def check_token():
+    """Check if token is valid"""
+    user_id = get_jwt_identity()  # Already a string
+    
+    # Find user in MongoDB
+    user = User.find_by_id(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    
+    return jsonify({
+        'message': 'Token is valid',
+        'user': {
+            'id': user['_id'],
+            'email': user['email'],
+            'name': user['name']
+        }
+    }), 200
