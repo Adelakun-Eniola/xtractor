@@ -53,3 +53,4 @@ webdriver-manager==4.0.2
 websocket-client==1.8.0
 Werkzeug==2.2.3
 wsproto==1.2.0
+pymongo==4.5.0
