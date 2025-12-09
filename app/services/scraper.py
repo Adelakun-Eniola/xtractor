@@ -581,6 +581,172 @@ class GoogleMapsSearchScraper:
                 'error': str(e)
             }
     
+    def extract_address_from_business_page(self, business_url):
+        """
+        Extract address from a Google Maps business detail page.
+        
+        Args:
+            business_url: URL of the business detail page
+            
+        Returns:
+            Address string or None if not found
+        """
+        try:
+            # Setup a temporary driver for this extraction
+            temp_driver = self.setup_driver()
+            temp_driver.get(business_url)
+            WebDriverWait(temp_driver, 5).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            time.sleep(1)
+            
+            # Extract address using multiple selectors
+            address_selectors = [
+                "//button[@data-item-id='address']//div[contains(@class, 'fontBodyMedium')]",
+                "//button[contains(@aria-label, 'Address')]//div[contains(@class, 'fontBodyMedium')]",
+                "//div[@data-tooltip='Copy address']",
+                "//button[contains(@data-tooltip, 'Copy address')]//div",
+                "//div[contains(@class, 'rogA2c')]",  # Address container
+            ]
+            
+            for selector in address_selectors:
+                try:
+                    address_element = temp_driver.find_element(By.XPATH, selector)
+                    address_text = address_element.text.strip()
+                    
+                    if address_text and len(address_text) > 5:
+                        temp_driver.quit()
+                        return address_text
+                        
+                except NoSuchElementException:
+                    continue
+            
+            temp_driver.quit()
+            return None
+            
+        except (TimeoutException, Exception) as e:
+            logging.warning(f"Could not extract address from {business_url}: {str(e)}")
+            if 'temp_driver' in locals():
+                try:
+                    temp_driver.quit()
+                except:
+                    pass
+            return None
+
+    def extract_website_from_business_page(self, business_url):
+        """
+        Extract website URL from a Google Maps business detail page.
+        Looks for domain extensions (.com, .ca, .org, etc.) and www prefixes.
+        
+        Args:
+            business_url: URL of the business detail page
+            
+        Returns:
+            Website URL string or None if not found
+        """
+        try:
+            # Setup a temporary driver for this extraction
+            temp_driver = self.setup_driver()
+            temp_driver.get(business_url)
+            WebDriverWait(temp_driver, 5).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            time.sleep(1)
+            
+            # Try multiple selectors to find website links
+            website_selectors = [
+                "//a[contains(@href, 'http') and contains(@aria-label, 'Website')]",
+                "//a[contains(@data-item-id, 'authority') and contains(@href, 'http')]",
+                "//a[contains(@href, 'http') and contains(text(), 'Website')]",
+                "//a[@data-tooltip='Open website']",
+                "//div[contains(@class, 'fontBodyMedium')]//a[contains(@href, 'http')]",
+                "//button[contains(@aria-label, 'Website')]//a",
+                "//a[contains(@href, '.com')]",
+                "//a[contains(@href, '.ca')]",
+                "//a[contains(@href, '.org')]",
+                "//a[contains(@href, '.net')]",
+                "//a[contains(@href, '.gov')]",
+                "//a[contains(@href, '.edu')]",
+                "//a[contains(@href, '.com.au')]",
+                "//a[contains(@href, '.co.uk')]",
+                "//a[contains(@href, '.au')]",
+            ]
+            
+            for selector in website_selectors:
+                try:
+                    website_elements = temp_driver.find_elements(By.XPATH, selector)
+                    for element in website_elements:
+                        href = element.get_attribute("href")
+                        if href:
+                            # Make sure it's not a Google URL
+                            if 'google.com' not in href and 'goo.gl' not in href and 'maps' not in href:
+                                # Check if it contains common domain extensions (including country-code TLDs)
+                                domain_extensions = [
+                                    '.com', '.ca', '.org', '.net', '.gov', '.edu', '.co', '.io', '.biz', '.info',
+                                    '.com.au', '.co.uk', '.co.nz', '.com.sg', '.co.za', '.com.br', '.com.mx',
+                                    '.au', '.uk', '.nz', '.de', '.fr', '.jp', '.cn', '.in', '.us'
+                                ]
+                                for ext in domain_extensions:
+                                    if ext in href.lower():
+                                        logging.info(f"Found website URL: {href}")
+                                        temp_driver.quit()
+                                        return href
+                        
+                        # Also check element text for domain patterns
+                        text = element.text.strip()
+                        if text:
+                            # Look for domain patterns in text (like "ahs.ca" or "example.com.au")
+                            import re
+                            domain_pattern = r'\b(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?\b'
+                            matches = re.findall(domain_pattern, text)
+                            for match in matches:
+                                if not any(skip in match.lower() for skip in ['google', 'maps', 'goo.gl']):
+                                    # Add http if not present
+                                    if not match.startswith('http'):
+                                        website_url = f"https://{match}"
+                                    else:
+                                        website_url = match
+                                    logging.info(f"Found website from text: {website_url}")
+                                    temp_driver.quit()
+                                    return website_url
+                                    
+                except NoSuchElementException:
+                    continue
+            
+            # Additional search in page source for domain patterns
+            try:
+                page_source = temp_driver.page_source
+                import re
+                # Look for domain patterns in the entire page (including country-code TLDs like .com.au)
+                domain_pattern = r'\b(?:www\.)?[a-zA-Z0-9-]+\.(?:com|ca|org|net|gov|edu|co|io|biz|info|au|uk|nz|de|fr)(?:\.(?:au|uk|nz|sg|za|br|mx))?\b'
+                matches = re.findall(domain_pattern, page_source, re.IGNORECASE)
+                
+                for match in matches:
+                    if not any(skip in match.lower() for skip in ['google', 'maps', 'goo.gl', 'youtube', 'facebook', 'instagram']):
+                        # Add https if not present
+                        if not match.startswith('http'):
+                            website_url = f"https://{match}"
+                        else:
+                            website_url = match
+                        logging.info(f"Found website from page source: {website_url}")
+                        temp_driver.quit()
+                        return website_url
+                        
+            except Exception as e:
+                logging.warning(f"Error searching page source for website: {e}")
+            
+            temp_driver.quit()
+            return None
+            
+        except (TimeoutException, Exception) as e:
+            logging.warning(f"Could not extract website from {business_url}: {str(e)}")
+            if 'temp_driver' in locals():
+                try:
+                    temp_driver.quit()
+                except:
+                    pass
+            return None
+
     def __del__(self):
         if hasattr(self, 'driver') and self.driver:
             try:
