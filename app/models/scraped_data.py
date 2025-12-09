@@ -20,7 +20,7 @@ class ScrapedData:
         try:
             if current_app:
                 db = current_app.config.get("MONGO_DB")
-                if db:
+                if db is not None:
                     return db
 
             raise Exception("MongoDB not initialized in current_app.config['MONGO_DB']")
