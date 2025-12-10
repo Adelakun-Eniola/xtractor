@@ -127,3 +127,101 @@ def check_auth():
             'authenticated': False,
             'error': str(e)
         }), 500
+
+@debug_bp.route('/test-scraper-save', methods=['POST'])
+@jwt_required()
+def test_scraper_save():
+    """Test scraper data saving functionality"""
+    user_id = get_jwt_identity()
+    
+    try:
+        # Simulate scraped data like the scraper would create
+        test_businesses = [
+            {
+                'company_name': 'Debug Test Business 1',
+                'email': 'contact@debugtest1.com',
+                'phone': '+1-555-DEBUG-1',
+                'address': '123 Debug Street, Test City, TC 12345',
+                'website_url': 'https://debugtest1.com',
+                'user_id': user_id
+            },
+            {
+                'company_name': 'Debug Test Business 2',
+                'email': None,  # Test with None values like scraper might produce
+                'phone': '+1-555-DEBUG-2',
+                'address': None,
+                'website_url': 'https://debugtest2.com',
+                'user_id': user_id
+            }
+        ]
+        
+        saved_count = 0
+        errors = []
+        saved_ids = []
+        
+        for business_data in test_businesses:
+            try:
+                # Check if business already exists (same logic as scraper)
+                existing = ScrapedData.get_collection().find_one({
+                    'user_id': user_id,
+                    'company_name': business_data['company_name'],
+                    'website_url': business_data['website_url']
+                })
+                
+                if not existing:
+                    document_id = ScrapedData.create(business_data)
+                    saved_count += 1
+                    saved_ids.append(str(document_id))
+                    print(f"DEBUG: Saved test business {business_data['company_name']} with ID: {document_id}")
+                else:
+                    print(f"DEBUG: Test business {business_data['company_name']} already exists")
+                    
+            except Exception as e:
+                error_msg = f"Error saving {business_data['company_name']}: {str(e)}"
+                print(f"DEBUG ERROR: {error_msg}")
+                errors.append(error_msg)
+        
+        # Get updated stats
+        stats = ScrapedData.get_stats(user_id)
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Test scraper save completed',
+            'saved_count': saved_count,
+            'saved_ids': saved_ids,
+            'errors': errors,
+            'user_stats': stats
+        }), 200
+        
+    except Exception as e:
+        print(f"DEBUG: Test scraper save error: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': 'Test scraper save failed',
+            'error': str(e)
+        }), 500
+
+@debug_bp.route('/cleanup-debug-data', methods=['DELETE'])
+@jwt_required()
+def cleanup_debug_data():
+    """Clean up debug test data"""
+    user_id = get_jwt_identity()
+    
+    try:
+        # Delete debug test data
+        db = current_app.config['MONGO_DB']
+        result = db.scraped_data.delete_many({
+            'user_id': user_id,
+            'company_name': {'$regex': '^Debug Test Business'}
+        })
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Debug data cleaned up: {result.deleted_count} documents deleted'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500

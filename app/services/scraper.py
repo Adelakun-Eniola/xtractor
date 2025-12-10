@@ -747,6 +747,154 @@ class GoogleMapsSearchScraper:
                     pass
             return None
 
+    def extract_email_from_website(self, website_url):
+        """
+        Extract email address from a business website.
+        
+        Args:
+            website_url: URL of the business website
+            
+        Returns:
+            Email address string or None if not found
+        """
+        try:
+            # Skip if no website URL
+            if not website_url or website_url == 'N/A':
+                return None
+                
+            logging.info(f"Extracting email from website: {website_url}")
+            
+            # Setup a temporary driver for this extraction
+            temp_driver = self.setup_driver()
+            temp_driver.get(website_url)
+            WebDriverWait(temp_driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            time.sleep(3)  # Allow page to fully load
+            
+            # Email regex pattern
+            email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+            
+            # Method 1: Look for mailto links
+            try:
+                mailto_links = temp_driver.find_elements(By.XPATH, "//a[contains(@href, 'mailto:')]")
+                for link in mailto_links:
+                    href = link.get_attribute("href")
+                    if href and 'mailto:' in href:
+                        email = href.replace("mailto:", "").strip()
+                        # Clean up any additional parameters
+                        if '?' in email:
+                            email = email.split('?')[0]
+                        if re.match(email_pattern, email):
+                            logging.info(f"Found email from mailto link: {email}")
+                            temp_driver.quit()
+                            return email
+            except Exception as e:
+                logging.warning(f"Error checking mailto links: {e}")
+            
+            # Method 2: Search page source for email patterns
+            try:
+                page_source = temp_driver.page_source
+                emails = re.findall(email_pattern, page_source)
+                
+                # Filter out common non-business emails
+                excluded_domains = [
+                    'example.com', 'test.com', 'gmail.com', 'yahoo.com', 'hotmail.com',
+                    'outlook.com', 'facebook.com', 'twitter.com', 'instagram.com',
+                    'linkedin.com', 'youtube.com', 'google.com', 'microsoft.com',
+                    'apple.com', 'amazon.com', 'noreply', 'no-reply'
+                ]
+                
+                for email in emails:
+                    email = email.lower().strip()
+                    # Skip if it contains excluded domains or patterns
+                    if not any(excluded in email for excluded in excluded_domains):
+                        # Prefer emails that match the website domain
+                        website_domain = website_url.replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0]
+                        if website_domain in email:
+                            logging.info(f"Found matching domain email: {email}")
+                            temp_driver.quit()
+                            return email
+                
+                # If no domain match, return the first valid email
+                for email in emails:
+                    email = email.lower().strip()
+                    if not any(excluded in email for excluded in excluded_domains):
+                        logging.info(f"Found email from page source: {email}")
+                        temp_driver.quit()
+                        return email
+                        
+            except Exception as e:
+                logging.warning(f"Error searching page source for emails: {e}")
+            
+            temp_driver.quit()
+            return None
+            
+        except (TimeoutException, Exception) as e:
+            logging.warning(f"Could not extract email from {website_url}: {str(e)}")
+            if 'temp_driver' in locals():
+                try:
+                    temp_driver.quit()
+                except:
+                    pass
+            return None
+
+    def extract_phone_from_business_page(self, business_url):
+        """
+        Extract phone number from a Google Maps business detail page.
+        
+        Args:
+            business_url: URL of the business detail page
+            
+        Returns:
+            Phone number string or None if not found
+        """
+        try:
+            # Setup a temporary driver for this extraction
+            temp_driver = self.setup_driver()
+            temp_driver.get(business_url)
+            WebDriverWait(temp_driver, 5).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            time.sleep(1)
+            
+            phone_selectors = [
+                "//button[@data-item-id='phone:tel:']//div[contains(@class, 'fontBodyMedium')]",
+                "//button[contains(@aria-label, 'Phone')]//div[contains(@class, 'fontBodyMedium')]",
+                "//a[contains(@href, 'tel:')]",
+                "//button[contains(@data-tooltip, 'Copy phone number')]//div",
+                "//div[contains(@class, 'rogA2c') and contains(., '+')]",
+            ]
+            
+            for selector in phone_selectors:
+                try:
+                    phone_element = temp_driver.find_element(By.XPATH, selector)
+                    phone_text = phone_element.text.strip()
+                    
+                    if not phone_text:
+                        href = phone_element.get_attribute("href")
+                        if href and 'tel:' in href:
+                            phone_text = href.replace("tel:", "").strip()
+                    
+                    if phone_text and len(phone_text) > 5:
+                        temp_driver.quit()
+                        return phone_text
+                        
+                except NoSuchElementException:
+                    continue
+            
+            temp_driver.quit()
+            return None
+            
+        except (TimeoutException, Exception) as e:
+            logging.warning(f"Could not extract phone from {business_url}: {str(e)}")
+            if 'temp_driver' in locals():
+                try:
+                    temp_driver.quit()
+                except:
+                    pass
+            return None
+
     def __del__(self):
         if hasattr(self, 'driver') and self.driver:
             try:
