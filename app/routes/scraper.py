@@ -131,31 +131,9 @@ def extract_data():
     if is_google_maps_search_url(url):
         logging.info(f"Detected Google Maps search URL, using GoogleMapsSearchScraper")
         
-        # If streaming is requested, use streaming endpoint
+        # If streaming is requested, use non-streaming for now (streaming not implemented for extract endpoint)
         if stream:
-            def generate():
-                """Generator function that yields results as they're scraped"""
-                try:
-                    search_scraper = GoogleMapsSearchScraper(url)
-                    
-                    # Send initial status
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Starting scraping...'})}\n\n"
-                    
-                    # Stream results as they come
-                    for result in search_scraper.scrape_all_businesses_stream(user_id):
-                        yield f"data: {json.dumps(result)}\n\n"
-                    
-                    # Send completion
-                    yield f"data: {json.dumps({'type': 'complete'})}\n\n"
-                    
-                except Exception as e:
-                    error_data = {
-                        'type': 'error',
-                        'error': str(e)
-                    }
-                    yield f"data: {json.dumps(error_data)}\n\n"
-            
-            return Response(generate(), mimetype='text/event-stream')
+            logging.info("Streaming requested but not implemented for extract endpoint, using non-streaming")
         
         # Non-streaming (original behavior)
         try:
@@ -163,10 +141,49 @@ def extract_data():
             search_scraper = GoogleMapsSearchScraper(url)
             result = search_scraper.scrape_all_businesses(user_id)
             
-            total_results = len(result['results'])
+            # Now save the results to MongoDB
+            saved_results = []
+            for business_data in result['results']:
+                try:
+                    # Check if business already exists
+                    existing = ScrapedData.get_collection().find_one({
+                        'user_id': user_id,
+                        'company_name': business_data['company_name'],
+                        'website_url': business_data['website_url']
+                    })
+                    
+                    if not existing:
+                        # Prepare data for MongoDB
+                        mongo_data = {
+                            'company_name': business_data['company_name'],
+                            'email': business_data['email'] if business_data['email'] != 'N/A' else None,
+                            'phone': business_data['phone'] if business_data['phone'] != 'N/A' else None,
+                            'address': business_data['address'] if business_data['address'] != 'N/A' else None,
+                            'website_url': business_data['website_url'],
+                            'user_id': user_id
+                        }
+                        
+                        document_id = ScrapedData.create(mongo_data)
+                        
+                        # Get the saved document for response
+                        saved_document = ScrapedData.find_by_id(document_id)
+                        saved_results.append(saved_document)
+                        
+                        logging.info(f"Saved business to MongoDB: {business_data['company_name']} with ID: {document_id}")
+                    else:
+                        logging.info(f"Business already exists: {business_data['company_name']}")
+                        
+                except Exception as save_error:
+                    logging.error(f"Error saving business {business_data['company_name']}: {save_error}")
+                    result['errors'].append({
+                        'business_name': business_data['company_name'],
+                        'error': f"Save error: {str(save_error)}"
+                    })
+            
+            total_results = len(saved_results)
             total_errors = len(result['errors'])
             
-            message = f'Extracted {total_results} business{"es" if total_results != 1 else ""}'
+            message = f'Extracted and saved {total_results} business{"es" if total_results != 1 else ""}'
             if total_errors > 0:
                 message += f' with {total_errors} error{"s" if total_errors != 1 else ""}'
             
@@ -174,7 +191,7 @@ def extract_data():
             
             return jsonify({
                 'message': message,
-                'data': result['results'],
+                'data': saved_results,
                 'errors': result['errors']
             }), 200
             

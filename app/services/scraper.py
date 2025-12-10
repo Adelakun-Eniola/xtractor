@@ -451,70 +451,19 @@ class GoogleMapsSearchScraper:
                     # DEBUG: Print scraped data
                     logging.info(f"Scraped data for {business_name}: {scraped_data}")
                     
-                    # Only save if we have meaningful data
+                    # Only return data if we have meaningful data (don't save here - let route handle saving)
                     if scraped_data.get('company_name') != 'N/A':
-                        # Prepare data for MongoDB
-                        mongo_data = {
+                        logging.info(f"Successfully scraped data for {business_name}")
+                        
+                        results.append({
                             'company_name': scraped_data.get('company_name', 'N/A'),
                             'email': scraped_data.get('email', 'N/A'),
                             'phone': scraped_data.get('phone', 'N/A'),
                             'address': scraped_data.get('address', 'N/A'),
                             'website_url': scraped_data.get('website_url', business_url),
-                            'user_id': user_id,
-                            'scraped_at': datetime.utcnow(),
+                            'scraped_at': datetime.utcnow().isoformat(),
                             'source_url': self.search_url
-                        }
-                        
-                        # DEBUG: Try to import MongoDB model
-                        try:
-                            from app.models.scraped_data import ScrapedData
-                            logging.info(f"MongoDB model imported successfully")
-                            
-                            # Try to save to MongoDB
-                            try:
-                                document_id = ScrapedData.create(mongo_data)
-                                logging.info(f"Saved to MongoDB with ID: {document_id}")
-                                
-                                # Verify the document was saved
-                                saved_doc = ScrapedData.find_by_id(document_id)
-                                if saved_doc:
-                                    logging.info(f"Document verified in database: {saved_doc.get('_id')}")
-                                else:
-                                    logging.warning(f"Document not found after saving: {document_id}")
-                                
-                                results.append({
-                                    'id': str(document_id),
-                                    'company_name': scraped_data.get('company_name', 'N/A'),
-                                    'email': scraped_data.get('email', 'N/A'),
-                                    'phone': scraped_data.get('phone', 'N/A'),
-                                    'address': scraped_data.get('address', 'N/A'),
-                                    'website_url': business_url,
-                                    'scraped_at': datetime.utcnow().isoformat()
-                                })
-                                
-                            except Exception as db_error:
-                                logging.error(f"MongoDB save error: {db_error}")
-                                logging.error(traceback.format_exc())
-                                errors.append({
-                                    'url': business_url,
-                                    'business_name': business_name,
-                                    'error': f"MongoDB error: {str(db_error)}"
-                                })
-                                
-                        except ImportError as import_error:
-                            logging.error(f"Failed to import MongoDB model: {import_error}")
-                            errors.append({
-                                'url': business_url,
-                                'business_name': business_name,
-                                'error': f"Database model error: {str(import_error)}"
-                            })
-                        except Exception as model_error:
-                            logging.error(f"MongoDB model error: {model_error}")
-                            errors.append({
-                                'url': business_url,
-                                'business_name': business_name,
-                                'error': f"Database error: {str(model_error)}"
-                            })
+                        })
                     else:
                         errors.append({
                             'url': business_url,
