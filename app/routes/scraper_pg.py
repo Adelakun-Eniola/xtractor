@@ -57,7 +57,8 @@ def extract_data():
             'details': str(e)
         }), 500
     
-    url_pattern = re.compile(r'^https?://[^\s/$.?#].[^\s]*$')$')$')
+    # Validate URL format
+    url_pattern = re.compile(r'^https?://[^\s/$.?#].[^\s]*$')
     if not url or not url_pattern.match(url):
         logging.warning(f"Invalid URL provided: {url}")
         return jsonify({'error': 'Invalid URL provided'}), 400
