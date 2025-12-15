@@ -16,6 +16,22 @@ auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 @auth_bp.route('/google', methods=['POST'])
 def google_auth():
     logger.debug("### /api/auth/google endpoint hit ###")
+    
+    # Check MongoDB connection first
+    try:
+        from flask import current_app
+        db = current_app.config.get('MONGO_DB')
+        if not db:
+            logger.error("MongoDB not initialized")
+            return jsonify({'error': 'Database not available'}), 500
+        
+        # Test MongoDB connection
+        db.command('ping')
+        logger.debug("MongoDB connection verified")
+    except Exception as db_error:
+        logger.error(f"MongoDB connection failed: {db_error}")
+        return jsonify({'error': 'Database connection failed'}), 500
+    
     if not request.is_json:
         logger.error("Request is not JSON")
         return jsonify({'error': 'Request must be JSON'}), 400
@@ -83,24 +99,38 @@ def google_auth():
                 user = User.find_by_email(email)
                 if not user:
                     # Create new user in MongoDB
-                    user_data = User.create(
-                        email=email,
-                        password=None,  # Google auth users don't need password
-                        name=name,
-                        google_id=google_id
-                    )
-                    logger.info(f"Created new user in MongoDB: {email}")
+                    try:
+                        user = User.create(
+                            email=email,
+                            password=None,  # Google auth users don't need password
+                            name=name,
+                            google_id=google_id
+                        )
+                        logger.info(f"Created new user in MongoDB: {email}")
+                    except Exception as create_error:
+                        logger.error(f"Failed to create user: {create_error}")
+                        return jsonify({'error': 'Failed to create user account'}), 500
                 else:
                     # Update existing user with google_id
-                    User.update_google_id(user['_id'], google_id)
-                    user['google_id'] = google_id
-                    logger.info(f"Updated existing user with Google ID: {email}")
+                    try:
+                        User.update_google_id(user['_id'], google_id)
+                        user['google_id'] = google_id
+                        logger.info(f"Updated existing user with Google ID: {email}")
+                    except Exception as update_error:
+                        logger.error(f"Failed to update user Google ID: {update_error}")
+                        # Continue anyway, user exists
             else:
                 logger.info(f"Found existing user: {email}")
 
+            # Ensure we have a valid user
+            if not user or '_id' not in user:
+                logger.error("User object is invalid or missing _id")
+                return jsonify({'error': 'Failed to process user account'}), 500
+
             # Create access token with MongoDB user ID (string)
-            access_token = create_access_token(identity=str(user['_id']))
-            logger.debug(f"Generated JWT with identity: {str(user['_id'])}")
+            user_id = str(user['_id'])
+            access_token = create_access_token(identity=user_id)
+            logger.debug(f"Generated JWT with identity: {user_id}")
 
             return jsonify({
                 'access_token': access_token,

@@ -1,4 +1,4 @@
-# scraper.py - UPDATED WITH MONGODB DEBUGGING
+
 
 import re
 import time
@@ -39,12 +39,18 @@ def is_google_maps_search_url(url):
     
     url_lower = url.lower()
     
+    # Direct search URLs
     if 'google.com/maps/search' in url_lower:
         return True
     
+    # General Google Maps URLs with search indicators
     if 'google.com/maps' in url_lower:
-        search_indicators = ['query=', 'q=', 'data=']
+        search_indicators = ['query=', 'q=', 'data=', 'search/', '/search']
         return any(indicator in url_lower for indicator in search_indicators)
+    
+    # Alternative Google Maps domains
+    if any(domain in url_lower for domain in ['maps.google.com', 'maps.app.goo.gl']):
+        return True
     
     return False
 
@@ -239,7 +245,7 @@ class WebScraper:
             email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
             page_source = self.driver.page_source.lower()
             emails = re.findall(email_pattern, page_source)
-            
+            =
             if emails:
                 self.data['email'] = self.validate_email_address(emails[0])
             else:
@@ -348,54 +354,137 @@ class GoogleMapsSearchScraper:
             WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(3)
+            time.sleep(5)  # Increased wait time for Google Maps to load
             
+            logging.info("Page loaded, starting business extraction...")
+            
+            # Try to scroll and load more results
             self.scroll_results_panel()
             
             businesses = []
             seen_urls = set()
             
-            business_links = self.driver.find_elements(
-                By.XPATH, "//a[contains(@href, '/maps/place/')]"
-            )[:limit]
+            # Try multiple selectors for business links (Google Maps changes frequently)
+            link_selectors = [
+                "//a[contains(@href, '/maps/place/')]",
+                "//a[contains(@href, 'place/')]",
+                "//div[@role='feed']//a[contains(@href, 'maps')]",
+                "//div[contains(@class, 'm6QErb')]//a",
+                "//div[contains(@class, 'Nv2PK')]//a",
+                "//div[contains(@jsaction, 'click')]//a[contains(@href, 'maps')]"
+            ]
             
-            for link in business_links:
+            business_links = []
+            for selector in link_selectors:
+                try:
+                    links = self.driver.find_elements(By.XPATH, selector)
+                    logging.info(f"Selector '{selector}' found {len(links)} links")
+                    if links:
+                        business_links = links[:limit]
+                        break
+                except Exception as e:
+                    logging.debug(f"Selector '{selector}' failed: {e}")
+                    continue
+            
+            if not business_links:
+                logging.warning("No business links found with any selector")
+                # Try to get page source for debugging
+                page_source = self.driver.page_source
+                logging.debug(f"Page source length: {len(page_source)}")
+                
+                # Check for common Google Maps indicators
+                if "maps" in page_source.lower():
+                    logging.info("Page contains 'maps' - likely on Google Maps")
+                if "place/" in page_source:
+                    logging.info("Page contains 'place/' - business links may be present")
+                
+                return []
+            
+            logging.info(f"Processing {len(business_links)} business links...")
+            
+            for i, link in enumerate(business_links):
                 try:
                     href = link.get_attribute("href")
-                    if not href or '/maps/place/' not in href:
+                    if not href:
+                        logging.debug(f"Link {i+1}: No href attribute")
+                        continue
+                    
+                    # More flexible URL checking
+                    if not any(pattern in href for pattern in ['/maps/place/', 'place/', 'maps']):
+                        logging.debug(f"Link {i+1}: Not a maps place URL: {href[:50]}...")
                         continue
                     
                     base_url = href.split('?')[0] if '?' in href else href
                     if base_url in seen_urls:
+                        logging.debug(f"Link {i+1}: Duplicate URL")
                         continue
                     seen_urls.add(base_url)
                     
+                    # Try multiple methods to get business name
                     business_name = "Unknown Business"
+                    
+                    # Method 1: Look for name in nearby elements
                     try:
+                        # Try different name selectors
+                        name_selectors = [
+                            ".//div[contains(@class, 'fontHeadlineSmall')]",
+                            ".//div[contains(@class, 'fontHeadlineLarge')]", 
+                            ".//span[contains(@class, 'fontHeadlineSmall')]",
+                            ".//div[contains(@class, 'qBF1Pd')]",
+                            ".//div[contains(@class, 'NrDZNb')]",
+                            ".//h3",
+                            ".//h2",
+                            ".//span[@class='OSrXXb']"
+                        ]
+                        
                         parent = link.find_element(By.XPATH, "./..")
-                        name_elements = parent.find_elements(
-                            By.XPATH, ".//div[contains(@class, 'fontHeadlineSmall')]"
-                        )
-                        if name_elements:
-                            business_name = name_elements[0].text.strip()
-                        else:
-                            business_name = link.text.strip() or "Unknown Business"
-                    except:
-                        pass
+                        for selector in name_selectors:
+                            try:
+                                name_elements = parent.find_elements(By.XPATH, selector)
+                                if name_elements:
+                                    name_text = name_elements[0].text.strip()
+                                    if name_text and len(name_text) > 0:
+                                        business_name = name_text
+                                        break
+                            except:
+                                continue
+                        
+                        # Method 2: Try link text itself
+                        if business_name == "Unknown Business":
+                            link_text = link.text.strip()
+                            if link_text and len(link_text) > 0:
+                                business_name = link_text
+                        
+                        # Method 3: Try aria-label
+                        if business_name == "Unknown Business":
+                            aria_label = link.get_attribute("aria-label")
+                            if aria_label and len(aria_label) > 0:
+                                business_name = aria_label
+                                
+                    except Exception as name_error:
+                        logging.debug(f"Error extracting name for link {i+1}: {name_error}")
+                    
+                    logging.info(f"Found business {len(businesses)+1}: {business_name}")
                     
                     businesses.append({
                         'name': business_name,
                         'url': href
                     })
                     
+                    if len(businesses) >= limit:
+                        break
+                    
                 except Exception as e:
-                    logging.debug(f"Error processing link: {e}")
+                    logging.debug(f"Error processing link {i+1}: {e}")
                     continue
             
+            logging.info(f"Successfully extracted {len(businesses)} businesses")
             return businesses
             
         except Exception as e:
             logging.error(f"Error extracting businesses: {e}")
+            import traceback
+            logging.error(f"Traceback: {traceback.format_exc()}")
             return []
     
     def extract_business_urls(self, limit=20):

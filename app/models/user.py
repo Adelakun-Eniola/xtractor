@@ -16,23 +16,34 @@ class User:
     @classmethod
     def create(cls, email, password, name=None, google_id=None):
         """Create a new user"""
-        if cls.find_by_email(email):
-            return None  # User already exists
+        try:
+            # Check if user already exists
+            existing_user = cls.find_by_email(email)
+            if existing_user:
+                logging.info(f"User already exists: {email}")
+                return existing_user  # Return existing user instead of None
 
-        user_data = {
-            'email': email,
-            'password': generate_password_hash(password) if password else None,
-            'name': name or email.split('@')[0],
-            'google_id': google_id,
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow(),
-            'scrape_count': 0,
-            'last_login': None
-        }
+            user_data = {
+                'email': email,
+                'password': generate_password_hash(password) if password else None,
+                'name': name or email.split('@')[0],
+                'google_id': google_id,
+                'created_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow(),
+                'scrape_count': 0,
+                'last_login': None
+            }
 
-        result = cls.get_collection().insert_one(user_data)
-        user_data['_id'] = str(result.inserted_id)
-        return user_data
+            collection = cls.get_collection()
+            result = collection.insert_one(user_data)
+            user_data['_id'] = str(result.inserted_id)
+            
+            logging.info(f"Created new user: {email} with ID: {user_data['_id']}")
+            return user_data
+            
+        except Exception as e:
+            logging.error(f"Error creating user {email}: {e}")
+            raise
 
     @classmethod
     def find_by_email(cls, email):
