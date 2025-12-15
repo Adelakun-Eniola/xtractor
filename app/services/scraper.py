@@ -73,7 +73,7 @@ class WebScraper:
         if phone_number == "N/A":
             return "N/A"
         
-        phone_pattern = r'^\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}$'$'$'
+        phone_pattern = r'^\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}$'
         return phone_number if re.match(phone_pattern, phone_number) else "N/A"
 
     def validate_email_address(self, email_address):

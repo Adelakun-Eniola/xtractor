@@ -573,7 +573,7 @@ def batch_extract():
     results, errors = [], []
     
     for url in urls:
-        if not re.match(r'^https?://[^\s/$.?#].[^\s]*$'$', url):
+        if not re.match(r'^https?://[^\s/$.?#].[^\s]*$', url):
             logging.warning(f"Invalid URL format in batch: {url}")
             errors.append({'url': url, 'error': 'Invalid URL format'})
             continue
