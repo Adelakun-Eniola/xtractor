@@ -93,13 +93,13 @@ def google_auth():
             email = idinfo['email']
             name = idinfo.get('name', '')
 
-            # Check if user exists in MongoDB
+            # Check if user exists in PostgreSQL
             user = User.find_by_google_id(google_id)
             if not user:
                 # Try by email as fallback
                 user = User.find_by_email(email)
                 if not user:
-                    # Create new user in MongoDB
+                    # Create new user in PostgreSQL
                     try:
                         user = User.create(
                             email=email,
@@ -107,14 +107,14 @@ def google_auth():
                             name=name,
                             google_id=google_id
                         )
-                        logger.info(f"Created new user in MongoDB: {email}")
+                        logger.info(f"Created new user in PostgreSQL: {email}")
                     except Exception as create_error:
                         logger.error(f"Failed to create user: {create_error}")
                         return jsonify({'error': 'Failed to create user account'}), 500
                 else:
                     # Update existing user with google_id
                     try:
-                        User.update_google_id(user['_id'], google_id)
+                        User.update_google_id(user['id'], google_id)
                         user['google_id'] = google_id
                         logger.info(f"Updated existing user with Google ID: {email}")
                     except Exception as update_error:
@@ -127,6 +127,12 @@ def google_auth():
             if not user or 'id' not in user:
                 logger.error("User object is invalid or missing id")
                 return jsonify({'error': 'Failed to process user account'}), 500
+
+            # Update last login
+            try:
+                User.update_last_login(user['id'])
+            except Exception as login_error:
+                logger.warning(f"Failed to update last login: {login_error}")
 
             # Create access token with PostgreSQL user ID (integer converted to string)
             user_id = str(user['id'])

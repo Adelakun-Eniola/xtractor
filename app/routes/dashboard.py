@@ -257,8 +257,21 @@ def get_user_data():
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 20))
         
-        # Get data from MongoDB with pagination
-        result = ScrapedData.find_by_user(user_id, page=page, per_page=per_page)
+        # Get data from PostgreSQL with pagination
+        offset = (page - 1) * per_page
+        data = ScrapedData.find_by_user_id(user_id, limit=per_page, offset=offset)
+        total_count = ScrapedData.count_by_user_id(user_id)
+        total_pages = (total_count + per_page - 1) // per_page
+        
+        result = {
+            'data': data,
+            'pagination': {
+                'total': total_count,
+                'page': page,
+                'per_page': per_page,
+                'pages': total_pages
+            }
+        }
         
         logger.info(f"Retrieved {len(result['data'])} documents for user {user_id}")
         
@@ -284,8 +297,8 @@ def get_data_detail(data_id):
     user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
     
     try:
-        # Get data from MongoDB
-        data = ScrapedData.find_by_id(data_id)
+        # Get data from PostgreSQL
+        data = ScrapedData.find_by_id(int(data_id))
         
         if not data:
             logger.warning(f"Data not found with ID: {data_id}")
@@ -312,10 +325,10 @@ def get_stats():
     user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
     
     try:
-        # Get stats from MongoDB
-        stats = ScrapedData.get_stats(user_id)  # Note: Changed from .stats() to .get_stats()
+        # Get stats from PostgreSQL
+        stats = ScrapedData.get_stats_by_user_id(user_id)
         
-        total_entries = stats.get('total', 0)
+        total_entries = stats.get('total_records', 0)
         with_email = stats.get('with_email', 0)
         with_phone = stats.get('with_phone', 0)
         with_address = stats.get('with_address', 0)
@@ -355,8 +368,8 @@ def search_data():
         return jsonify({'error': 'Search term must be at least 2 characters'}), 400
     
     try:
-        # Search in MongoDB
-        results = ScrapedData.search(user_id, search_term)
+        # Search in PostgreSQL
+        results = ScrapedData.search_by_user_id(user_id, search_term)
         
         return jsonify({
             'count': len(results),
@@ -379,7 +392,8 @@ def export_data():
     
     try:
         # Get all user data
-        result = ScrapedData.find_by_user(user_id, page=1, per_page=1000)  # Large limit for export
+        data = ScrapedData.find_by_user_id(user_id, limit=1000, offset=0)  # Large limit for export
+        result = {'data': data}
         
         if not result['data']:
             return jsonify({'error': 'No data to export'}), 404
@@ -426,17 +440,8 @@ def delete_data(data_id):
     user_id = int(get_jwt_identity())
     
     try:
-        # First check if data exists and belongs to user
-        data = ScrapedData.find_by_id(data_id)
-        
-        if not data:
-            return jsonify({'error': 'Data not found'}), 404
-        
-        if data.get('user_id') != user_id:
-            return jsonify({'error': 'Access denied'}), 403
-        
-        # Delete from MongoDB
-        success = ScrapedData.delete(data_id)
+        # Delete from PostgreSQL (with user verification)
+        success = ScrapedData.delete_by_id(int(data_id), user_id)
         
         if success:
             logger.info(f"Deleted data {data_id} for user {user_id}")
@@ -459,7 +464,7 @@ def clear_all_data():
     
     try:
         # Delete all data for user
-        deleted_count = ScrapedData.delete_by_user(user_id)
+        deleted_count = ScrapedData.delete_all_by_user_id(user_id)
         
         logger.info(f"Cleared {deleted_count} documents for user {user_id}")
         
