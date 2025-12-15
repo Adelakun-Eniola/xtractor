@@ -6,7 +6,7 @@ from google.auth.exceptions import InvalidValue, MalformedError
 import os
 import logging
 from datetime import datetime
-from app.models.user import User  # MongoDB User model
+from app.models.user_pg import User  # PostgreSQL User model
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -17,19 +17,20 @@ auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 def google_auth():
     logger.debug("### /api/auth/google endpoint hit ###")
     
-    # Check MongoDB connection first
+    # Check PostgreSQL connection first
     try:
         from flask import current_app
-        db = current_app.config.get('MONGO_DB')
-        if not db:
-            logger.error("MongoDB not initialized")
+        if not current_app.config.get('DB_CONNECTED'):
+            logger.error("Database not initialized")
             return jsonify({'error': 'Database not available'}), 500
         
-        # Test MongoDB connection
-        db.command('ping')
-        logger.debug("MongoDB connection verified")
+        # Test PostgreSQL connection
+        import psycopg2
+        conn = psycopg2.connect(current_app.config['DATABASE_URL'])
+        conn.close()
+        logger.debug("PostgreSQL connection verified")
     except Exception as db_error:
-        logger.error(f"MongoDB connection failed: {db_error}")
+        logger.error(f"PostgreSQL connection failed: {db_error}")
         return jsonify({'error': 'Database connection failed'}), 500
     
     if not request.is_json:
@@ -123,19 +124,19 @@ def google_auth():
                 logger.info(f"Found existing user: {email}")
 
             # Ensure we have a valid user
-            if not user or '_id' not in user:
-                logger.error("User object is invalid or missing _id")
+            if not user or 'id' not in user:
+                logger.error("User object is invalid or missing id")
                 return jsonify({'error': 'Failed to process user account'}), 500
 
-            # Create access token with MongoDB user ID (string)
-            user_id = str(user['_id'])
+            # Create access token with PostgreSQL user ID (integer converted to string)
+            user_id = str(user['id'])
             access_token = create_access_token(identity=user_id)
             logger.debug(f"Generated JWT with identity: {user_id}")
 
             return jsonify({
                 'access_token': access_token,
                 'user': {
-                    'id': user['_id'],
+                    'id': user['id'],
                     'email': user['email'],
                     'name': user['name'],
                     'google_id': user.get('google_id')
@@ -160,16 +161,16 @@ def google_auth():
 @jwt_required()
 def get_user():
     """Get current user info"""
-    user_id = get_jwt_identity()  # MongoDB user ID (string)
+    user_id = get_jwt_identity()  # PostgreSQL user ID (string)
     
-    # Find user in MongoDB
-    user = User.find_by_id(user_id)
+    # Find user in PostgreSQL
+    user = User.find_by_id(int(user_id))
     
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
     return jsonify({
-        'id': user['_id'],
+        'id': user['id'],
         'email': user['email'],
         'name': user['name'],
         'google_id': user.get('google_id')
@@ -179,17 +180,17 @@ def get_user():
 @jwt_required()
 def check_token():
     """Check if token is valid"""
-    user_id = get_jwt_identity()  # Already a string
+    user_id = get_jwt_identity()  # String from JWT
     
-    # Find user in MongoDB
-    user = User.find_by_id(user_id)
+    # Find user in PostgreSQL
+    user = User.find_by_id(int(user_id))
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
     return jsonify({
         'message': 'Token is valid',
         'user': {
-            'id': user['_id'],
+            'id': user['id'],
             'email': user['email'],
             'name': user['name']
         }

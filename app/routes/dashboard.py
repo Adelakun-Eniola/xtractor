@@ -238,7 +238,7 @@
 
 from flask import Blueprint, jsonify, request, make_response
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from app.models.scraped_data import ScrapedData
+from app.models.scraped_data_pg import ScrapedData
 import logging
 from datetime import datetime
 
@@ -250,7 +250,7 @@ dashboard_bp = Blueprint('dashboard', __name__, url_prefix='/api/dashboard')
 @jwt_required()
 def get_user_data():
     """Get all scraped data for the current user with pagination"""
-    user_id = get_jwt_identity()  # MongoDB user IDs are strings
+    user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
     
     try:
         # Get page and per_page from query parameters
@@ -281,7 +281,7 @@ def get_user_data():
 @jwt_required()
 def get_data_detail(data_id):
     """Get details for a specific scraped data entry"""
-    user_id = get_jwt_identity()  # MongoDB user IDs are strings
+    user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
     
     try:
         # Get data from MongoDB
@@ -309,7 +309,7 @@ def get_data_detail(data_id):
 @jwt_required()
 def get_stats():
     """Get statistics about user's scraped data"""
-    user_id = get_jwt_identity()  # MongoDB user IDs are strings
+    user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
     
     try:
         # Get stats from MongoDB
@@ -348,7 +348,7 @@ def get_stats():
 @jwt_required()
 def search_data():
     """Search user's scraped data"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     search_term = request.args.get('q', '')
     
     if not search_term or len(search_term) < 2:
@@ -375,7 +375,7 @@ def search_data():
 @jwt_required()
 def export_data():
     """Export user's scraped data as CSV"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     try:
         # Get all user data
@@ -423,7 +423,7 @@ def export_data():
 @jwt_required()
 def delete_data(data_id):
     """Delete a specific scraped data entry"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     try:
         # First check if data exists and belongs to user
@@ -455,7 +455,7 @@ def delete_data(data_id):
 @jwt_required()
 def clear_all_data():
     """Delete all scraped data for the current user"""
-    user_id = get_jwt_identity()
+    user_id = int(get_jwt_identity())
     
     try:
         # Delete all data for user

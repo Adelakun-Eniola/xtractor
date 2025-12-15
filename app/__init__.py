@@ -1,8 +1,7 @@
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
-from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+import psycopg2
 from datetime import timedelta
 import os
 from dotenv import load_dotenv
@@ -17,15 +16,18 @@ def create_app():
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
     app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'dev-jwt-secret')
     
-    # MongoDB Atlas Configuration
-    mongo_uri = os.getenv('MONGO_URI')
+    # Supabase PostgreSQL Configuration
+    database_url = os.getenv('DATABASE_URL')
     
-    if not mongo_uri:
+    if not database_url:
         # Fallback for development
-        mongo_uri = 'mongodb://localhost:27017/extractor_db'
-        logging.warning("MONGO_URI not set, using local MongoDB")
+        database_url = 'postgresql://postgres:password@localhost:5432/extractor_db'
+        logging.warning("DATABASE_URL not set, using local PostgreSQL")
     
-    # CORS Configuration (keep as is)
+    # Store database URL in app config
+    app.config['DATABASE_URL'] = database_url
+    
+    # CORS Configuration
     allowed_origins = [
         "https://xtract-indol.vercel.app",
         "http://localhost:3000",
@@ -38,10 +40,10 @@ def create_app():
         "supports_credentials": True
     }})
     
-    # Initialize JWT (keep as is)
+    # Initialize JWT
     jwt = JWTManager(app)
     
-    # JWT Error Handlers (keep as is)
+    # JWT Error Handlers
     @jwt.invalid_token_loader
     def invalid_token_callback(error):
         return jsonify({'error': 'Invalid token', 'details': str(error)}), 422
@@ -54,40 +56,26 @@ def create_app():
     def expired_token_callback(jwt_header, jwt_payload):
         return jsonify({'error': 'Token has expired', 'details': 'Please log in again'}), 401
     
-    # Initialize MongoDB DIRECTLY
+    # Initialize PostgreSQL Database
     try:
-        # Create MongoDB client
-        client = MongoClient(
-            mongo_uri,
-            maxPoolSize=100,
-            serverSelectionTimeoutMS=30000
-        )
-        
         # Test connection
-        client.admin.command('ping')
-        print("✅ MongoDB Atlas connection successful!")
+        conn = psycopg2.connect(database_url)
+        conn.close()
+        print("✅ Supabase PostgreSQL connection successful!")
         
-        # Store the client and db in app config
-        db_name = mongo_uri.split('/')[-1].split('?')[0]
-        app.config['MONGO_CLIENT'] = client
-        app.config['MONGO_DB'] = client[db_name]
+        # Create tables
+        create_tables()
         
-        # Create indexes
-        create_indexes(client[db_name])
+        app.config['DB_CONNECTED'] = True
         
-    except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-        print(f"⚠️ MongoDB connection warning: {e}")
-        print("App will start, but MongoDB features may not work")
-        app.config['MONGO_CLIENT'] = None
-        app.config['MONGO_DB'] = None
     except Exception as e:
-        print(f"⚠️ MongoDB initialization error: {e}")
-        app.config['MONGO_CLIENT'] = None
-        app.config['MONGO_DB'] = None
+        print(f"⚠️ PostgreSQL connection warning: {e}")
+        print("App will start, but database features may not work")
+        app.config['DB_CONNECTED'] = False
     
-    # Register Blueprints (keep as is)
+    # Register Blueprints
     from app.routes.auth import auth_bp
-    from app.routes.scraper import scraper_bp
+    from app.routes.scraper_pg import scraper_bp  # Use PostgreSQL version
     from app.routes.dashboard import dashboard_bp
     from app.routes.debug import debug_bp
     
@@ -100,9 +88,9 @@ def create_app():
     @app.route('/api/health', methods=['GET'])
     def health_check():
         try:
-            client = app.config['MONGO_CLIENT']
-            if client:
-                client.admin.command('ping')
+            if app.config.get('DB_CONNECTED'):
+                conn = psycopg2.connect(app.config['DATABASE_URL'])
+                conn.close()
                 return jsonify({'status': 'healthy', 'database': 'connected'}), 200
             else:
                 return jsonify({'status': 'unhealthy', 'database': 'not initialized'}), 500
@@ -111,18 +99,15 @@ def create_app():
     
     return app
 
-def create_indexes(db):
-    """Create MongoDB indexes."""
+def create_tables():
+    """Create PostgreSQL tables."""
     try:
-        # Index for users
-        db.users.create_index([('email', 1)], unique=True)
+        from app.models.user_pg import User
+        from app.models.scraped_data_pg import ScrapedData
         
-        # Indexes for scraped_data
-        db.scraped_data.create_index([('user_id', 1)])
-        db.scraped_data.create_index([('created_at', -1)])
-        db.scraped_data.create_index([('user_id', 1), ('created_at', -1)])
-        db.scraped_data.create_index([('company_name', 'text')])
+        User.create_tables()
+        ScrapedData.create_tables()
         
-        print("✅ MongoDB indexes created successfully")
+        print("✅ PostgreSQL tables created successfully")
     except Exception as e:
-        print(f"⚠️ Error creating MongoDB indexes: {e}")
+        print(f"⚠️ Error creating PostgreSQL tables: {e}")

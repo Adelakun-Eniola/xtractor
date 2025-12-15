@@ -1,8 +1,8 @@
 from flask import Blueprint, request, jsonify, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask_cors import CORS
-from app.models.scraped_data import ScrapedData
-from app.models.user import User
+from app.models.scraped_data_pg import ScrapedData
+from app.models.user_pg import User
 from app.services.scraper import WebScraper, is_google_maps_search_url, GoogleMapsSearchScraper
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 import re
@@ -88,7 +88,7 @@ def test_search_businesses():
 def extract_data():
     """Extract data from a website or Google Maps search results"""
     try:
-        user_id = get_jwt_identity()  # MongoDB user IDs are strings
+        user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
         
         # Get URL from request
         data = request.get_json()
@@ -146,11 +146,14 @@ def extract_data():
             for business_data in result['results']:
                 try:
                     # Check if business already exists
-                    existing = ScrapedData.get_collection().find_one({
-                        'user_id': user_id,
-                        'company_name': business_data['company_name'],
-                        'website_url': business_data['website_url']
-                    })
+                    # For PostgreSQL, we'll use a simple search method
+                    existing_records = ScrapedData.find_by_user_id(user_id, limit=1000)
+                    existing = None
+                    for record in existing_records:
+                        if (record.get('company_name') == business_data['company_name'] and 
+                            record.get('website_url') == business_data['website_url']):
+                            existing = record
+                            break
                     
                     if not existing:
                         # Prepare data for MongoDB
@@ -287,7 +290,7 @@ def search_businesses():
     """Get list of businesses from Google Maps search URL without scraping details"""
     search_scraper = None
     try:
-        user_id = get_jwt_identity()  # MongoDB user IDs are strings
+        user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
         data = request.get_json()
         url = data.get('url')
         include_phone = data.get('include_phone', False)  # Optional parameter
@@ -553,7 +556,7 @@ def search_businesses():
 @jwt_required()
 def batch_extract():
     """Extract data from multiple websites"""
-    user_id = get_jwt_identity()  # MongoDB user IDs are strings
+    user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
     
     # Verify user exists
     user = User.find_by_id(user_id)
@@ -632,7 +635,7 @@ def search_addresses():
     """Get addresses for businesses from Google Maps search URL"""
     search_scraper = None
     try:
-        user_id = get_jwt_identity()  # MongoDB user IDs are strings
+        user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
         data = request.get_json()
         url = data.get('url')
         stream = data.get('stream', False)  # Enable streaming
@@ -871,9 +874,9 @@ def search_addresses():
 @scraper_bp.route('/sync-data', methods=['POST'])
 @jwt_required()
 def sync_local_data():
-    """Sync local data to server MongoDB database"""
+    """Sync local data to server PostgreSQL database"""
     try:
-        user_id = get_jwt_identity()  # MongoDB user IDs are strings
+        user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
         data = request.get_json()
         businesses = data.get('businesses', [])
         
