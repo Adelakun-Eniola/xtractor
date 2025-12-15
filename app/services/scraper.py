@@ -73,7 +73,7 @@ class WebScraper:
         if phone_number == "N/A":
             return "N/A"
         
-        phone_pattern = r'^\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}$'$'
+        phone_pattern = r'^\+?\d{1,4}?[-.\s]?\(?\d{1,3}?\)?[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}$'$'$'
         return phone_number if re.match(phone_pattern, phone_number) else "N/A"
 
     def validate_email_address(self, email_address):
@@ -87,7 +87,7 @@ class WebScraper:
         if url == "N/A":
             return "N/A"
         
-        url_pattern = r'^(https?:\/\/)?([\w\-]+(\.[\w\-]+)+)(\/.*)?$'$'
+        url_pattern = r'^(https?:\/\/)?([\w\-]+(\.[\w\-]+)+)(\/.*)?$'
         return url if re.match(url_pattern, url, re.IGNORECASE) else "N/A"
 
     def setup_driver(self, headless=True):
