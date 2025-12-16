@@ -909,20 +909,31 @@ class GoogleMapsSearchScraper:
                     pass
             return None
 
-    def extract_phone_from_business_page(self, business_url):
+    def extract_phone_from_business_page(self, business_url, driver=None):
         """
         Extract phone number from a Google Maps business detail page.
         
         Args:
             business_url: URL of the business detail page
+            driver: Optional existing webdriver to reuse
             
         Returns:
             Phone number string or None if not found
         """
         try:
-            # Setup a temporary driver for this extraction
-            temp_driver = self.setup_driver()
-            temp_driver.get(business_url)
+            # Setup driver (reuse if provided, otherwise create temp)
+            if driver:
+                temp_driver = driver
+            else:
+                temp_driver = self.setup_driver()
+            
+            # Navigate if needed
+            try:
+                if temp_driver.current_url != business_url:
+                    temp_driver.get(business_url)
+            except:
+                temp_driver.get(business_url)
+                
             WebDriverWait(temp_driver, 5).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
@@ -947,13 +958,15 @@ class GoogleMapsSearchScraper:
                             phone_text = href.replace("tel:", "").strip()
                     
                     if phone_text and len(phone_text) > 5:
-                        temp_driver.quit()
+                        if not driver:
+                            temp_driver.quit()
                         return phone_text
                         
                 except NoSuchElementException:
                     continue
             
-            temp_driver.quit()
+            if not driver:
+                temp_driver.quit()
             return None
             
         except (TimeoutException, Exception) as e:

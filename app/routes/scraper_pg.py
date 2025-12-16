@@ -324,7 +324,7 @@ def search_addresses():
                             logging.info(f"Extracting phone for business {i}/{total}: {business['name']}")
                             try:
                                 if hasattr(search_scraper, 'extract_phone_from_business_page'):
-                                    phone = search_scraper.extract_phone_from_business_page(business['url'])
+                                    phone = search_scraper.extract_phone_from_business_page(business['url'], driver=search_scraper.driver)
                                     business_info['phone'] = phone if phone else 'N/A'
                                     logging.info(f"Business {i}/{total}: {business['name']} - Phone: {business_info['phone']}")
                                 else:
@@ -333,9 +333,6 @@ def search_addresses():
                             except Exception as extract_error:
                                 logging.error(f"Error extracting phone for {business['name']}: {str(extract_error)}")
                                 business_info['phone'] = 'N/A'
-                            
-                            # Restart driver for address extraction (memory optimization) - REMOVED for efficiency
-                            # logging.info(f"Restarting driver for address extraction - business {i}/{total}")
                             
                             # Extract address
                             logging.info(f"Extracting address for business {i}/{total}: {business['name']}")
@@ -351,9 +348,6 @@ def search_addresses():
                                 logging.error(f"Error extracting address for {business['name']}: {str(extract_error)}")
                                 business_info['address'] = 'N/A'
                             
-                            # Restart driver for website extraction (memory optimization) - REMOVED for efficiency
-                            # logging.info(f"Restarting driver for website extraction - business {i}/{total}")
-                            
                             # Extract website
                             logging.info(f"Extracting website for business {i}/{total}: {business['name']}")
                             try:
@@ -368,16 +362,11 @@ def search_addresses():
                                 logging.error(f"Error extracting website for {business['name']}: {str(extract_error)}")
                                 business_info['website'] = 'N/A'
                             
-                            # Restart driver for email extraction (memory optimization) - REMOVED for efficiency
-                            # logging.info(f"Restarting driver for email extraction - business {i}/{total}")
-                            
                             # Extract email from website
                             logging.info(f"Extracting email for business {i}/{total}: {business['name']}")
                             try:
                                 if hasattr(search_scraper, 'extract_email_from_website'):
-                                    email = search_scraper.extract_email_from_website(business_info['website']) # Email extraction likely doesn't need driver if it just uses requests, but if it uses selenium, we should check implementation. It wasn't modified to take driver in my plan because it often navigates away. Let's check. Ah, I did not modify extract_email_from_website to take driver because it wasn't in the plan. It's safer to leave as is or separate. 
-                                    # Wait, extract_email_from_website usually just regexes the page source of the website.
-                                    # If I didn't update it, I shouldn't pass driver.
+                                    email = search_scraper.extract_email_from_website(business_info['website']) 
                                     business_info['email'] = email if email else 'N/A'
                                     logging.info(f"Business {i}/{total}: {business['name']} - Email: {business_info['email']}")
                                 else:
@@ -387,8 +376,8 @@ def search_addresses():
                                 logging.error(f"Error extracting email for {business['name']}: {str(extract_error)}")
                                 business_info['email'] = 'N/A'
                             
-                            # Collect for PostgreSQL saving
-                            extracted_businesses.append({
+                            # Collect data object
+                            business_data_record = {
                                 'company_name': business_info['name'],
                                 'email': business_info['email'] if business_info['email'] not in ['N/A', 'Not found'] else None,
                                 'phone': business_info['phone'] if business_info['phone'] not in ['N/A', 'Not found'] else None,
@@ -396,8 +385,24 @@ def search_addresses():
                                 'website_url': business_info['website'] if business_info['website'] not in ['N/A', 'Not found'] else business_info['url'],
                                 'user_id': user_id,
                                 'source_url': url
-                            })
+                            }
                             
+                            extracted_businesses.append(business_data_record)
+                            
+                            # INCREMENTAL SAVE: Save to DB immediately
+                            try:
+                                existing = check_existing_business(
+                                    user_id, 
+                                    business_data_record['company_name'], 
+                                    business_data_record['website_url']
+                                )
+                                if not existing:
+                                    ScrapedData.create(business_data_record)
+                                    saved_count += 1
+                                    logging.info(f"Saved business to DB: {business_info['name']}")
+                            except Exception as db_error:
+                                logging.error(f"Error saving business {business_info['name']} to DB: {str(db_error)}")
+
                             # Send this business with phone, address, website, and email
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
@@ -419,30 +424,7 @@ def search_addresses():
                             yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A', 'address': 'N/A', 'website': 'N/A', 'email': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
                             continue
                     
-                    # Save all businesses to PostgreSQL in batch
-                    saved_count = 0
-                    if extracted_businesses:
-                        try:
-                            for business_data in extracted_businesses:
-                                try:
-                                    # Check if business already exists in PostgreSQL
-                                    existing = check_existing_business(
-                                        user_id, 
-                                        business_data['company_name'], 
-                                        business_data['website_url']
-                                    )
-                                    
-                                    if not existing:
-                                        ScrapedData.create(business_data)
-                                        saved_count += 1
-                                except Exception as e:
-                                    logging.error(f"Error adding business to PostgreSQL: {e}")
-                                    continue
-                            
-                            logging.info(f"Successfully saved {saved_count} businesses to PostgreSQL")
-                                
-                        except Exception as e:
-                            logging.error(f"PostgreSQL batch save failed: {e}")
+                    logging.info(f"Successfully saved {saved_count} businesses to PostgreSQL")
                     
                     # Send completion
                     yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses (saved {saved_count} to database)', 'total': total})}\n\n"
