@@ -10,8 +10,7 @@ class ScrapedData:
     @staticmethod
     def get_connection():
         """Return a PostgreSQL connection"""
-        import os
-        database_url = os.getenv('DATABASE_URL')
+        database_url = current_app.config.get('DATABASE_URL')
         if not database_url:
             raise Exception("DATABASE_URL not configured")
         return psycopg2.connect(database_url)

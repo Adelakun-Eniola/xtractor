@@ -7,7 +7,10 @@ import os
 from dotenv import load_dotenv
 import logging
 
-load_dotenv()
+# Load env explicitly from backend directory
+basedir = os.path.abspath(os.path.dirname(__file__))
+env_path = os.path.join(basedir, '..', '.env')
+load_dotenv(env_path)
 
 def create_app():
     app = Flask(__name__)
