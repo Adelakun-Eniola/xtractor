@@ -334,22 +334,14 @@ def search_addresses():
                                 logging.error(f"Error extracting phone for {business['name']}: {str(extract_error)}")
                                 business_info['phone'] = 'N/A'
                             
-                            # Restart driver for address extraction (memory optimization)
-                            logging.info(f"Restarting driver for address extraction - business {i}/{total}")
-                            try:
-                                search_scraper.driver.quit()
-                                import time
-                                time.sleep(1)  # Wait for cleanup
-                                search_scraper.driver = search_scraper.setup_driver()
-                                logging.info("Driver restarted successfully for address extraction")
-                            except Exception as restart_error:
-                                logging.error(f"Error restarting driver for address extraction: {str(restart_error)}")
+                            # Restart driver for address extraction (memory optimization) - REMOVED for efficiency
+                            # logging.info(f"Restarting driver for address extraction - business {i}/{total}")
                             
                             # Extract address
                             logging.info(f"Extracting address for business {i}/{total}: {business['name']}")
                             try:
                                 if hasattr(search_scraper, 'extract_address_from_business_page'):
-                                    address = search_scraper.extract_address_from_business_page(business['url'])
+                                    address = search_scraper.extract_address_from_business_page(business['url'], driver=search_scraper.driver)
                                     business_info['address'] = address if address else 'N/A'
                                     logging.info(f"Business {i}/{total}: {business['name']} - Address: {business_info['address']}")
                                 else:
@@ -359,22 +351,14 @@ def search_addresses():
                                 logging.error(f"Error extracting address for {business['name']}: {str(extract_error)}")
                                 business_info['address'] = 'N/A'
                             
-                            # Restart driver for website extraction (memory optimization)
-                            logging.info(f"Restarting driver for website extraction - business {i}/{total}")
-                            try:
-                                search_scraper.driver.quit()
-                                import time
-                                time.sleep(1)  # Wait for cleanup
-                                search_scraper.driver = search_scraper.setup_driver()
-                                logging.info("Driver restarted successfully for website extraction")
-                            except Exception as restart_error:
-                                logging.error(f"Error restarting driver for website extraction: {str(restart_error)}")
+                            # Restart driver for website extraction (memory optimization) - REMOVED for efficiency
+                            # logging.info(f"Restarting driver for website extraction - business {i}/{total}")
                             
                             # Extract website
                             logging.info(f"Extracting website for business {i}/{total}: {business['name']}")
                             try:
                                 if hasattr(search_scraper, 'extract_website_from_business_page'):
-                                    website = search_scraper.extract_website_from_business_page(business['url'])
+                                    website = search_scraper.extract_website_from_business_page(business['url'], driver=search_scraper.driver)
                                     business_info['website'] = website if website else 'N/A'
                                     logging.info(f"Business {i}/{total}: {business['name']} - Website: {business_info['website']}")
                                 else:
@@ -384,22 +368,16 @@ def search_addresses():
                                 logging.error(f"Error extracting website for {business['name']}: {str(extract_error)}")
                                 business_info['website'] = 'N/A'
                             
-                            # Restart driver for email extraction (memory optimization)
-                            logging.info(f"Restarting driver for email extraction - business {i}/{total}")
-                            try:
-                                search_scraper.driver.quit()
-                                import time
-                                time.sleep(1)  # Wait for cleanup
-                                search_scraper.driver = search_scraper.setup_driver()
-                                logging.info("Driver restarted successfully for email extraction")
-                            except Exception as restart_error:
-                                logging.error(f"Error restarting driver for email extraction: {str(restart_error)}")
+                            # Restart driver for email extraction (memory optimization) - REMOVED for efficiency
+                            # logging.info(f"Restarting driver for email extraction - business {i}/{total}")
                             
                             # Extract email from website
                             logging.info(f"Extracting email for business {i}/{total}: {business['name']}")
                             try:
                                 if hasattr(search_scraper, 'extract_email_from_website'):
-                                    email = search_scraper.extract_email_from_website(business_info['website'])
+                                    email = search_scraper.extract_email_from_website(business_info['website']) # Email extraction likely doesn't need driver if it just uses requests, but if it uses selenium, we should check implementation. It wasn't modified to take driver in my plan because it often navigates away. Let's check. Ah, I did not modify extract_email_from_website to take driver because it wasn't in the plan. It's safer to leave as is or separate. 
+                                    # Wait, extract_email_from_website usually just regexes the page source of the website.
+                                    # If I didn't update it, I shouldn't pass driver.
                                     business_info['email'] = email if email else 'N/A'
                                     logging.info(f"Business {i}/{total}: {business['name']} - Email: {business_info['email']}")
                                 else:
@@ -423,7 +401,7 @@ def search_addresses():
                             # Send this business with phone, address, website, and email
                             yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
-                            # Memory optimization: Restart driver after EVERY business to free memory (Render 512MB limit)
+                            # Memory optimization: Restart driver/clear cookies after EVERY business
                             if i < total:
                                 logging.info(f"Restarting driver after business {i} to free memory")
                                 try:

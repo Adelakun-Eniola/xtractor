@@ -71,7 +71,8 @@ def create_app():
         print("✅ Supabase PostgreSQL connection successful!")
         
         # Create tables
-        create_tables()
+        with app.app_context():
+            create_tables()
         
         app.config['DB_CONNECTED'] = True
         

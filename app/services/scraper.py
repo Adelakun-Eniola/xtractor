@@ -619,20 +619,31 @@ class GoogleMapsSearchScraper:
                 'error': str(e)
             }
     
-    def extract_address_from_business_page(self, business_url):
+    def extract_address_from_business_page(self, business_url, driver=None):
         """
         Extract address from a Google Maps business detail page.
         
         Args:
             business_url: URL of the business detail page
+            driver: Optional existing webdriver to reuse
             
         Returns:
             Address string or None if not found
         """
         try:
-            # Setup a temporary driver for this extraction
-            temp_driver = self.setup_driver()
-            temp_driver.get(business_url)
+            # Setup driver (reuse if provided, otherwise create temp)
+            if driver:
+                temp_driver = driver
+            else:
+                temp_driver = self.setup_driver()
+            
+            # Navigate if needed (check if already on page to save time)
+            try:
+                if temp_driver.current_url != business_url:
+                    temp_driver.get(business_url)
+            except:
+                temp_driver.get(business_url)
+            
             WebDriverWait(temp_driver, 5).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
@@ -653,39 +664,53 @@ class GoogleMapsSearchScraper:
                     address_text = address_element.text.strip()
                     
                     if address_text and len(address_text) > 5:
-                        temp_driver.quit()
+                        if not driver:
+                            temp_driver.quit()
                         return address_text
                         
                 except NoSuchElementException:
                     continue
             
-            temp_driver.quit()
+            if not driver:
+                temp_driver.quit()
             return None
             
         except (TimeoutException, Exception) as e:
             logging.warning(f"Could not extract address from {business_url}: {str(e)}")
-            if 'temp_driver' in locals():
-                try:
-                    temp_driver.quit()
-                except:
-                    pass
+            if not driver:
+                if 'temp_driver' in locals():
+                    try:
+                        temp_driver.quit()
+                    except:
+                        pass
             return None
 
-    def extract_website_from_business_page(self, business_url):
+    def extract_website_from_business_page(self, business_url, driver=None):
         """
         Extract website URL from a Google Maps business detail page.
         Looks for domain extensions (.com, .ca, .org, etc.) and www prefixes.
         
         Args:
             business_url: URL of the business detail page
+            driver: Optional existing webdriver to reuse
             
         Returns:
             Website URL string or None if not found
         """
         try:
-            # Setup a temporary driver for this extraction
-            temp_driver = self.setup_driver()
-            temp_driver.get(business_url)
+            # Setup driver (reuse if provided, otherwise create temp)
+            if driver:
+                temp_driver = driver
+            else:
+                temp_driver = self.setup_driver()
+            
+            # Navigate if needed
+            try:
+                if temp_driver.current_url != business_url:
+                    temp_driver.get(business_url)
+            except:
+                temp_driver.get(business_url)
+                
             WebDriverWait(temp_driver, 5).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
@@ -727,7 +752,8 @@ class GoogleMapsSearchScraper:
                                 for ext in domain_extensions:
                                     if ext in href.lower():
                                         logging.info(f"Found website URL: {href}")
-                                        temp_driver.quit()
+                                        if not driver:
+                                            temp_driver.quit()
                                         return href
                         
                         # Also check element text for domain patterns
@@ -745,7 +771,8 @@ class GoogleMapsSearchScraper:
                                     else:
                                         website_url = match
                                     logging.info(f"Found website from text: {website_url}")
-                                    temp_driver.quit()
+                                    if not driver: # Only quit if we created the driver
+                                        temp_driver.quit()
                                     return website_url
                                     
                 except NoSuchElementException:
@@ -767,22 +794,25 @@ class GoogleMapsSearchScraper:
                         else:
                             website_url = match
                         logging.info(f"Found website from page source: {website_url}")
-                        temp_driver.quit()
+                        if not driver:
+                            temp_driver.quit()
                         return website_url
                         
             except Exception as e:
                 logging.warning(f"Error searching page source for website: {e}")
             
-            temp_driver.quit()
+            if not driver:
+                temp_driver.quit()
             return None
             
         except (TimeoutException, Exception) as e:
             logging.warning(f"Could not extract website from {business_url}: {str(e)}")
-            if 'temp_driver' in locals():
-                try:
-                    temp_driver.quit()
-                except:
-                    pass
+            if not driver:
+                if 'temp_driver' in locals():
+                    try:
+                        temp_driver.quit()
+                    except:
+                        pass
             return None
 
     def extract_email_from_website(self, website_url):
