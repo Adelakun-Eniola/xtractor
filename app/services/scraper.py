@@ -97,7 +97,9 @@ class WebScraper:
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--remote-debugging-port=9222")
+        # options.add_argument("--remote-debugging-port=9222") # Removed to prevent port conflicts
+        options.add_argument("--disable-extensions")
+        options.add_argument("--window-size=1920,1080")
         
         if headless:
             options.add_argument("--headless=new")
