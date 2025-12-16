@@ -281,32 +281,32 @@ def search_addresses():
                 search_scraper = None
                 try:
                     # Send initial status
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Starting address extraction...'})}\\n\\n"
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Starting address extraction...'})}\n\n"
                     
                     # Check URL
                     if not url:
-                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL is required'})}\\n\\n"
+                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL is required'})}\n\n"
                         return
                     
                     if not is_google_maps_search_url(url):
-                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL must be a Google Maps search URL'})}\\n\\n"
+                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL must be a Google Maps search URL'})}\n\n"
                         return
                     
                     # Create scraper
                     search_scraper = GoogleMapsSearchScraper(url)
                     search_scraper.driver = search_scraper.setup_driver()
                     
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Extracting businesses...'})}\\n\\n"
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Extracting businesses...'})}\n\n"
                     
                     # Get all businesses first
                     businesses_data = search_scraper.extract_businesses_with_names()
                     
                     if not businesses_data:
-                        yield f"data: {json.dumps({'type': 'complete', 'message': 'No businesses found', 'total': 0})}\\n\\n"
+                        yield f"data: {json.dumps({'type': 'complete', 'message': 'No businesses found', 'total': 0})}\n\n"
                         return
                     
                     total = len(businesses_data)
-                    yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting phone numbers, addresses, websites, and emails...', 'total': total})}\\n\\n"
+                    yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting phone numbers, addresses, websites, and emails...', 'total': total})}\n\n"
                     
                     # Collect businesses for database saving
                     extracted_businesses = []
@@ -421,7 +421,7 @@ def search_addresses():
                             })
                             
                             # Send this business with phone, address, website, and email
-                            yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\\n\\n"
+                            yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
                             
                             # Memory optimization: Restart driver after EVERY business to free memory (Render 512MB limit)
                             if i < total:
@@ -438,7 +438,7 @@ def search_addresses():
                         except Exception as business_error:
                             logging.error(f"Error processing business {i}/{total}: {str(business_error)}")
                             # Send error for this business but continue
-                            yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A', 'address': 'N/A', 'website': 'N/A', 'email': 'N/A'}, 'progress': {'current': i, 'total': total}})}\\n\\n"
+                            yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A', 'address': 'N/A', 'website': 'N/A', 'email': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
                             continue
                     
                     # Save all businesses to PostgreSQL in batch
@@ -467,11 +467,11 @@ def search_addresses():
                             logging.error(f"PostgreSQL batch save failed: {e}")
                     
                     # Send completion
-                    yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses (saved {saved_count} to database)', 'total': total})}\\n\\n"
+                    yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses (saved {saved_count} to database)', 'total': total})}\n\n"
                     
                 except Exception as e:
                     logging.error(f"Error in address streaming: {str(e)}")
-                    yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\\n\\n"
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
                 finally:
                     if search_scraper and search_scraper.driver:
                         try:
