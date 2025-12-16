@@ -24,6 +24,10 @@ def create_app():
         database_url = 'postgresql://postgres:password@localhost:5432/extractor_db'
         logging.warning("DATABASE_URL not set, using local PostgreSQL")
     
+    # Strip whitespace/newlines from database_url if it exists
+    if database_url:
+        database_url = database_url.strip()
+    
     # Store database URL in app config
     app.config['DATABASE_URL'] = database_url
     
