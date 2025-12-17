@@ -83,7 +83,7 @@ def create_app():
     
     # Register Blueprints
     from app.routes.auth import auth_bp
-    from app.routes.scraper_pg import scraper_bp  # Use PostgreSQL version
+    from app.routes.scraper import scraper_bp  # Main scraper with chunked endpoints
     from app.routes.dashboard import dashboard_bp
     from app.routes.debug import debug_bp
     
@@ -112,9 +112,11 @@ def create_tables():
     try:
         from app.models.user_pg import User
         from app.models.scraped_data_pg import ScrapedData
+        from app.models.search_job_pg import SearchJob
         
         User.create_tables()
         ScrapedData.create_tables()
+        SearchJob.create_tables()
         
         print("✅ PostgreSQL tables created successfully")
     except Exception as e:

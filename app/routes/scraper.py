@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask_cors import CORS
 from app.models.scraped_data_pg import ScrapedData
 from app.models.user_pg import User
+from app.models.search_job_pg import SearchJob
 from app.services.scraper import WebScraper, is_google_maps_search_url, GoogleMapsSearchScraper
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 import re
@@ -13,6 +14,21 @@ from datetime import datetime
 
 scraper_bp = Blueprint('scraper', __name__, url_prefix='/api/scraper')
 CORS(scraper_bp)
+
+
+def check_existing_business(user_id, company_name, website_url):
+    """Helper function to check if business already exists in PostgreSQL"""
+    try:
+        existing_records = ScrapedData.find_by_user_id(user_id, limit=1000)
+        for record in existing_records:
+            if (record.get('company_name') == company_name and 
+                record.get('website_url') == website_url):
+                return record
+        return None
+    except Exception as e:
+        logging.error(f"Error checking existing business: {e}")
+        return None
+
 
 @scraper_bp.route('/health', methods=['GET'])
 def health_check():
@@ -388,30 +404,30 @@ def search_businesses():
                             yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
                             continue
                     
-                    # Save all businesses to MongoDB in batch
+                    # Save all businesses to database in batch
                     saved_count = 0
                     if extracted_businesses:
                         try:
                             for business_data in extracted_businesses:
                                 try:
-                                    # Check if business already exists in MongoDB
-                                    existing = ScrapedData.get_collection().find_one({
-                                        'user_id': user_id,
-                                        'company_name': business_data['company_name'],
-                                        'website_url': business_data['website_url']
-                                    })
+                                    # Check if business already exists
+                                    existing = check_existing_business(
+                                        user_id,
+                                        business_data['company_name'],
+                                        business_data['website_url']
+                                    )
                                     
                                     if not existing:
                                         ScrapedData.create(business_data)
                                         saved_count += 1
                                 except Exception as e:
-                                    logging.error(f"Error adding business to MongoDB: {e}")
+                                    logging.error(f"Error adding business to database: {e}")
                                     continue
                             
-                            logging.info(f"Successfully saved {saved_count} businesses to MongoDB")
+                            logging.info(f"Successfully saved {saved_count} businesses to database")
                                 
                         except Exception as e:
-                            logging.error(f"MongoDB batch save failed: {e}")
+                            logging.error(f"Database batch save failed: {e}")
                     
                     # Send completion
                     yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses (saved {saved_count} to database)', 'total': total})}\n\n"
@@ -808,30 +824,30 @@ def search_addresses():
                             yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A', 'address': 'N/A', 'website': 'N/A', 'email': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
                             continue
                     
-                    # Save all businesses to MongoDB in batch
+                    # Save all businesses to database in batch
                     saved_count = 0
                     if extracted_businesses:
                         try:
                             for business_data in extracted_businesses:
                                 try:
-                                    # Check if business already exists in MongoDB
-                                    existing = ScrapedData.get_collection().find_one({
-                                        'user_id': user_id,
-                                        'company_name': business_data['company_name'],
-                                        'website_url': business_data['website_url']
-                                    })
+                                    # Check if business already exists
+                                    existing = check_existing_business(
+                                        user_id,
+                                        business_data['company_name'],
+                                        business_data['website_url']
+                                    )
                                     
                                     if not existing:
                                         ScrapedData.create(business_data)
                                         saved_count += 1
                                 except Exception as e:
-                                    logging.error(f"Error adding business to MongoDB: {e}")
+                                    logging.error(f"Error adding business to database: {e}")
                                     continue
                             
-                            logging.info(f"Successfully saved {saved_count} businesses to MongoDB")
+                            logging.info(f"Successfully saved {saved_count} businesses to database")
                                 
                         except Exception as e:
-                            logging.error(f"MongoDB batch save failed: {e}")
+                            logging.error(f"Database batch save failed: {e}")
                     
                     # Send completion
                     yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses (saved {saved_count} to database)', 'total': total})}\n\n"
@@ -906,18 +922,18 @@ def sync_local_data():
         
         for business in businesses:
             try:
-                # Check if this business already exists in MongoDB (by company name and website)
-                existing = ScrapedData.get_collection().find_one({
-                    'user_id': user_id,
-                    'company_name': business.get('company_name'),
-                    'website_url': business.get('website_url', '')
-                })
+                # Check if this business already exists (by company name and website)
+                existing = check_existing_business(
+                    user_id,
+                    business.get('company_name'),
+                    business.get('website_url', '')
+                )
                 
                 if existing:
                     logging.info(f"Business already exists: {business.get('company_name')}")
                     continue
                 
-                # Create document for MongoDB
+                # Create document for database
                 document_data = {
                     'company_name': business.get('company_name'),
                     'email': business.get('email') if business.get('email') not in ['N/A', 'Not found', None] else None,
@@ -926,13 +942,6 @@ def sync_local_data():
                     'website_url': business.get('website_url', ''),
                     'user_id': user_id
                 }
-                
-                # Set created_at if provided
-                if business.get('created_at'):
-                    try:
-                        document_data['created_at'] = datetime.fromisoformat(business['created_at'].replace('Z', '+00:00'))
-                    except:
-                        pass  # Use default timestamp
                 
                 document_id = ScrapedData.create(document_data)
                 saved_count += 1
@@ -943,7 +952,7 @@ def sync_local_data():
                 logging.error(error_msg)
                 errors.append(error_msg)
         
-        logging.info(f"Successfully synced {saved_count} businesses to MongoDB")
+        logging.info(f"Successfully synced {saved_count} businesses to database")
         
         return jsonify({
             'message': f'Successfully synced {saved_count} businesses to server',
@@ -1100,3 +1109,198 @@ def test_address_extraction():
             'error': 'Failed to extract addresses',
             'details': str(e)
         }), 500
+
+
+# ============================================
+# CHUNKED SCRAPING ENDPOINTS
+# These endpoints eliminate HTTP timeouts and memory issues
+# by breaking scraping into small batches
+# ============================================
+
+@scraper_bp.route('/init', methods=['POST'])
+@jwt_required()
+def init_search_job():
+    """Initialize a scraping job: Create job, find businesses, return job ID"""
+    search_scraper = None
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        url = data.get('url')
+        
+        logging.info(f"Init Job called by user {user_id} with URL: {url}")
+        
+        if not url or not is_google_maps_search_url(url):
+            return jsonify({'error': 'Valid Google Maps search URL is required'}), 400
+
+        # Stage 1: Get the list of businesses
+        search_scraper = GoogleMapsSearchScraper(url)
+        search_scraper.driver = search_scraper.setup_driver()
+        
+        # Scrape business list
+        businesses_data = search_scraper.extract_businesses_with_names()
+        
+        search_scraper.driver.quit()  # Close immediately
+        
+        if not businesses_data:
+            return jsonify({'error': 'No businesses found at that location'}), 404
+            
+        # Create SearchJob entry
+        items = []
+        for b in businesses_data:
+            items.append({
+                'name': b['name'],
+                'url': b['url'],
+                'status': 'pending' 
+            })
+            
+        job_data = {
+            'user_id': user_id,
+            'search_url': url,
+            'items': items,
+            'total_items': len(items)
+        }
+        
+        job_id = SearchJob.create(job_data)
+        
+        logging.info(f"Created search job {job_id} with {len(items)} businesses")
+        
+        return jsonify({
+            'message': 'Job initialized',
+            'job_id': job_id,
+            'total_items': len(items)
+        }), 201
+        
+    except Exception as e:
+        logging.error(f"Error initializing job: {e}")
+        if search_scraper and getattr(search_scraper, 'driver', None):
+            try:
+                search_scraper.driver.quit()
+            except:
+                pass
+        return jsonify({'error': str(e)}), 500
+
+
+@scraper_bp.route('/batch', methods=['POST'])
+@jwt_required()
+def process_batch():
+    """Process a small batch of a SearchJob"""
+    search_scraper = None
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        job_id = data.get('job_id')
+        limit = data.get('limit', 5)  # Default small batch
+        
+        if not job_id:
+            return jsonify({'error': 'Job ID required'}), 400
+             
+        # Fetch Job
+        job = SearchJob.find_by_id(job_id, user_id)
+        if not job:
+            return jsonify({'error': 'Job not found'}), 404
+             
+        if job['status'] == 'completed':
+            return jsonify({'message': 'Job already completed', 'completed': True, 'results': []}), 200
+            
+        items = job['items']
+        
+        # Identify next batch
+        batch_indices = []
+        target_items = []
+        
+        for i, item in enumerate(items):
+            if item['status'] == 'pending':
+                batch_indices.append(i)
+                target_items.append(item)
+                if len(batch_indices) >= limit:
+                    break
+        
+        if not target_items:
+            # Mark job complete if no pending items
+            SearchJob.update_progress(job_id, job['processed_items'], items, status='completed')
+            return jsonify({'message': 'Job complete', 'completed': True, 'results': []}), 200
+            
+        # Process Batch
+        results = []
+        
+        # Setup Scraper ONCE for the batch
+        search_scraper = GoogleMapsSearchScraper("dummy")  # URL doesn't matter here
+        search_scraper.driver = search_scraper.setup_driver()
+        
+        processed_count_in_batch = 0
+        
+        for idx, item in zip(batch_indices, target_items):
+            try:
+                logging.info(f"Processing batch item {idx}: {item['name']}")
+                
+                # Scrape details using the shared driver
+                # Phone
+                phone = search_scraper.extract_phone_from_business_page(item['url'], driver=search_scraper.driver)
+                
+                # Address
+                address = search_scraper.extract_address_from_business_page(item['url'], driver=search_scraper.driver)
+                
+                # Website
+                website = search_scraper.extract_website_from_business_page(item['url'], driver=search_scraper.driver)
+                
+                # Email
+                email = None
+                real_website = website if website else item['url']
+                if real_website and 'http' in real_website:
+                    email = search_scraper.extract_email_from_website(real_website)
+
+                # Prepare Data
+                business_data = {
+                    'company_name': item['name'],
+                    'website_url': website if website else item['url'],
+                    'source_url': job['search_url'],
+                    'address': address,
+                    'phone': phone,
+                    'email': email,
+                    'user_id': user_id
+                }
+                
+                # Save to MongoDB (Incremental Persistence)
+                existing = check_existing_business(user_id, business_data['company_name'], business_data['website_url'])
+                if not existing:
+                    ScrapedData.create(business_data)
+                    logging.info(f"Saved: {item['name']}")
+                
+                # Update Item Status in Memory
+                items[idx]['status'] = 'completed'
+                processed_count_in_batch += 1
+                results.append(business_data)
+                
+            except Exception as e:
+                logging.error(f"Error processing item {item['name']}: {e}")
+                items[idx]['status'] = 'failed'  # Mark failed so we don't retry forever
+        
+        # Cleanup Driver
+        search_scraper.driver.quit()
+        
+        # Update Job Progress in DB
+        new_processed_count = job['processed_items'] + processed_count_in_batch
+        status = 'active'
+        if new_processed_count >= job['total_items']:
+            status = 'completed'
+            
+        SearchJob.update_progress(job_id, new_processed_count, items, status=status)
+        
+        logging.info(f"Batch complete: processed {processed_count_in_batch} items, total {new_processed_count}/{job['total_items']}")
+        
+        return jsonify({
+            'results': results,
+            'job_id': job_id,
+            'processed': new_processed_count,
+            'total': job['total_items'],
+            'completed': status == 'completed'
+        }), 200
+
+    except Exception as e:
+        logging.error(f"Batch processing error: {e}")
+        if search_scraper and getattr(search_scraper, 'driver', None):
+            try:
+                search_scraper.driver.quit()
+            except:
+                pass
+        return jsonify({'error': str(e)}), 500

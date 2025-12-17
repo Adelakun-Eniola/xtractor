@@ -10,6 +10,8 @@ import os
 import logging
 import json
 from datetime import datetime
+from app.models.search_job_pg import SearchJob
+from datetime import datetime
 
 scraper_bp = Blueprint('scraper', __name__, url_prefix='/api/scraper')
 CORS(scraper_bp)
@@ -261,205 +263,187 @@ def sync_local_data():
             'details': str(e)
         }), 500
 
-@scraper_bp.route('/search-addresses', methods=['POST'])
+@scraper_bp.route('/init', methods=['POST'])
 @jwt_required()
-def search_addresses():
-    """Get addresses for businesses from Google Maps search URL"""
+def init_search_job():
+    """Initialize a scraping job: Create job, find businesses, return job ID"""
     search_scraper = None
     try:
-        user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
+        user_id = int(get_jwt_identity())
         data = request.get_json()
         url = data.get('url')
-        stream = data.get('stream', False)  # Enable streaming
         
-        logging.info(f"Search addresses endpoint called by user {user_id} with URL: {url}, stream: {stream}")
+        logging.info(f"Init Job called by user {user_id} with URL: {url}")
         
-        # If streaming is requested, use SSE
-        if stream:
-            def generate():
-                """Generator function for Server-Sent Events"""
-                search_scraper = None
-                try:
-                    # Send initial status
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Starting address extraction...'})}\n\n"
-                    
-                    # Check URL
-                    if not url:
-                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL is required'})}\n\n"
-                        return
-                    
-                    if not is_google_maps_search_url(url):
-                        yield f"data: {json.dumps({'type': 'error', 'error': 'URL must be a Google Maps search URL'})}\n\n"
-                        return
-                    
-                    # Create scraper
-                    search_scraper = GoogleMapsSearchScraper(url)
-                    search_scraper.driver = search_scraper.setup_driver()
-                    
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Extracting businesses...'})}\n\n"
-                    
-                    # Get all businesses first
-                    businesses_data = search_scraper.extract_businesses_with_names()
-                    
-                    if not businesses_data:
-                        yield f"data: {json.dumps({'type': 'complete', 'message': 'No businesses found', 'total': 0})}\n\n"
-                        return
-                    
-                    total = len(businesses_data)
-                    yield f"data: {json.dumps({'type': 'status', 'message': f'Found {total} businesses. Extracting phone numbers, addresses, websites, and emails...', 'total': total})}\n\n"
-                    
-                    # Collect businesses for database saving
-                    extracted_businesses = []
-                    
-                    # Stream each business with address and phone
-                    for i, business in enumerate(businesses_data, 1):
-                        try:
-                            business_info = {
-                                'index': i,
-                                'name': business['name'],
-                                'url': business['url']
-                            }
-                            
-                            # Extract phone number first
-                            logging.info(f"Extracting phone for business {i}/{total}: {business['name']}")
-                            try:
-                                if hasattr(search_scraper, 'extract_phone_from_business_page'):
-                                    phone = search_scraper.extract_phone_from_business_page(business['url'], driver=search_scraper.driver)
-                                    business_info['phone'] = phone if phone else 'N/A'
-                                    logging.info(f"Business {i}/{total}: {business['name']} - Phone: {business_info['phone']}")
-                                else:
-                                    logging.error(f"extract_phone_from_business_page method not found on scraper object")
-                                    business_info['phone'] = 'N/A'
-                            except Exception as extract_error:
-                                logging.error(f"Error extracting phone for {business['name']}: {str(extract_error)}")
-                                business_info['phone'] = 'N/A'
-                            
-                            # Extract address
-                            logging.info(f"Extracting address for business {i}/{total}: {business['name']}")
-                            try:
-                                if hasattr(search_scraper, 'extract_address_from_business_page'):
-                                    address = search_scraper.extract_address_from_business_page(business['url'], driver=search_scraper.driver)
-                                    business_info['address'] = address if address else 'N/A'
-                                    logging.info(f"Business {i}/{total}: {business['name']} - Address: {business_info['address']}")
-                                else:
-                                    logging.error(f"extract_address_from_business_page method not found on scraper object")
-                                    business_info['address'] = 'N/A'
-                            except Exception as extract_error:
-                                logging.error(f"Error extracting address for {business['name']}: {str(extract_error)}")
-                                business_info['address'] = 'N/A'
-                            
-                            # Extract website
-                            logging.info(f"Extracting website for business {i}/{total}: {business['name']}")
-                            try:
-                                if hasattr(search_scraper, 'extract_website_from_business_page'):
-                                    website = search_scraper.extract_website_from_business_page(business['url'], driver=search_scraper.driver)
-                                    business_info['website'] = website if website else 'N/A'
-                                    logging.info(f"Business {i}/{total}: {business['name']} - Website: {business_info['website']}")
-                                else:
-                                    logging.error(f"extract_website_from_business_page method not found on scraper object")
-                                    business_info['website'] = 'N/A'
-                            except Exception as extract_error:
-                                logging.error(f"Error extracting website for {business['name']}: {str(extract_error)}")
-                                business_info['website'] = 'N/A'
-                            
-                            # Extract email from website
-                            logging.info(f"Extracting email for business {i}/{total}: {business['name']}")
-                            try:
-                                if hasattr(search_scraper, 'extract_email_from_website'):
-                                    email = search_scraper.extract_email_from_website(business_info['website']) 
-                                    business_info['email'] = email if email else 'N/A'
-                                    logging.info(f"Business {i}/{total}: {business['name']} - Email: {business_info['email']}")
-                                else:
-                                    logging.error(f"extract_email_from_website method not found on scraper object")
-                                    business_info['email'] = 'N/A'
-                            except Exception as extract_error:
-                                logging.error(f"Error extracting email for {business['name']}: {str(extract_error)}")
-                                business_info['email'] = 'N/A'
-                            
-                            # Collect data object
-                            business_data_record = {
-                                'company_name': business_info['name'],
-                                'email': business_info['email'] if business_info['email'] not in ['N/A', 'Not found'] else None,
-                                'phone': business_info['phone'] if business_info['phone'] not in ['N/A', 'Not found'] else None,
-                                'address': business_info['address'] if business_info['address'] not in ['N/A', 'Not found'] else None,
-                                'website_url': business_info['website'] if business_info['website'] not in ['N/A', 'Not found'] else business_info['url'],
-                                'user_id': user_id,
-                                'source_url': url
-                            }
-                            
-                            extracted_businesses.append(business_data_record)
-                            
-                            # INCREMENTAL SAVE: Save to DB immediately
-                            try:
-                                existing = check_existing_business(
-                                    user_id, 
-                                    business_data_record['company_name'], 
-                                    business_data_record['website_url']
-                                )
-                                if not existing:
-                                    ScrapedData.create(business_data_record)
-                                    saved_count += 1
-                                    logging.info(f"Saved business to DB: {business_info['name']}")
-                            except Exception as db_error:
-                                logging.error(f"Error saving business {business_info['name']} to DB: {str(db_error)}")
+        if not url or not is_google_maps_search_url(url):
+             return jsonify({'error': 'Valid Google Maps search URL is required'}), 400
 
-                            # Send this business with phone, address, website, and email
-                            yield f"data: {json.dumps({'type': 'business', 'data': business_info, 'progress': {'current': i, 'total': total}})}\n\n"
-                            
-                            # Memory optimization: Restart driver/clear cookies after EVERY business
-                            if i < total:
-                                logging.info(f"Restarting driver after business {i} to free memory")
-                                try:
-                                    search_scraper.driver.quit()
-                                    import time
-                                    time.sleep(1)  # Wait for cleanup
-                                    search_scraper.driver = search_scraper.setup_driver()
-                                    logging.info("Driver restarted successfully")
-                                except Exception as restart_error:
-                                    logging.error(f"Error restarting driver: {str(restart_error)}")
-                            
-                        except Exception as business_error:
-                            logging.error(f"Error processing business {i}/{total}: {str(business_error)}")
-                            # Send error for this business but continue
-                            yield f"data: {json.dumps({'type': 'business', 'data': {'index': i, 'name': 'Error', 'url': '', 'phone': 'N/A', 'address': 'N/A', 'website': 'N/A', 'email': 'N/A'}, 'progress': {'current': i, 'total': total}})}\n\n"
-                            continue
-                    
-                    logging.info(f"Successfully saved {saved_count} businesses to PostgreSQL")
-                    
-                    # Send completion
-                    yield f"data: {json.dumps({'type': 'complete', 'message': f'Completed! Extracted {total} businesses (saved {saved_count} to database)', 'total': total})}\n\n"
-                    
-                except Exception as e:
-                    logging.error(f"Error in address streaming: {str(e)}")
-                    yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-                finally:
-                    if search_scraper and search_scraper.driver:
-                        try:
-                            search_scraper.driver.quit()
-                        except:
-                            pass
+        # Stage 1: Get the list of businesses
+        search_scraper = GoogleMapsSearchScraper(url)
+        search_scraper.driver = search_scraper.setup_driver()
+        
+        # Scrape business list
+        businesses_data = search_scraper.extract_businesses_with_names()
+        
+        search_scraper.driver.quit() # Close immediately
+        
+        if not businesses_data:
+            return jsonify({'error': 'No businesses found at that location'}), 404
             
-            response = Response(generate(), mimetype='text/event-stream')
-            response.headers['Cache-Control'] = 'no-cache'
-            response.headers['X-Accel-Buffering'] = 'no'
-            return response
+        # Create SearchJob entry
+        items = []
+        for b in businesses_data:
+            items.append({
+                'name': b['name'],
+                'url': b['url'],
+                'status': 'pending' 
+            })
+            
+        job_data = {
+            'user_id': user_id,
+            'search_url': url,
+            'items': items,
+            'total_items': len(items)
+        }
         
-        # Non-streaming version (if needed)
-        return jsonify({'error': 'Non-streaming address extraction not implemented'}), 400
-                
+        job_id = SearchJob.create(job_data)
+        
+        return jsonify({
+            'message': 'Job initialized',
+            'job_id': job_id,
+            'total_items': len(items)
+        }), 201
+        
     except Exception as e:
-        logging.error(f"Unexpected error in search_addresses: {str(e)}")
-        import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
-        
-        # Try to close driver if it exists
-        if search_scraper and hasattr(search_scraper, 'driver') and search_scraper.driver:
+        logging.error(f"Error initializing job: {e}")
+        if search_scraper and getattr(search_scraper, 'driver', None):
             try:
                 search_scraper.driver.quit()
             except:
                 pass
+        return jsonify({'error': str(e)}), 500
+
+@scraper_bp.route('/batch', methods=['POST'])
+@jwt_required()
+def process_batch():
+    """Process a small batch of a SearchJob"""
+    search_scraper = None
+    try:
+        user_id = int(get_jwt_identity())
+        data = request.get_json()
+        job_id = data.get('job_id')
+        limit = data.get('limit', 5) # Default small batch
+        
+        if not job_id:
+             return jsonify({'error': 'Job ID required'}), 400
+             
+        # Fetch Job
+        job = SearchJob.find_by_id(job_id, user_id)
+        if not job:
+             return jsonify({'error': 'Job not found'}), 404
+             
+        if job['status'] == 'completed':
+            return jsonify({'message': 'Job already completed', 'completed': True, 'results': []}), 200
+            
+        items = job['items']
+        
+        # Identify next batch
+        batch_indices = []
+        target_items = []
+        
+        for i, item in enumerate(items):
+            if item['status'] == 'pending':
+                batch_indices.append(i)
+                target_items.append(item)
+                if len(batch_indices) >= limit:
+                    break
+        
+        if not target_items:
+            # Mark job complete if no pending items
+            SearchJob.update_progress(job_id, job['processed_items'], items, status='completed')
+            return jsonify({'message': 'Job complete', 'completed': True, 'results': []}), 200
+            
+        # Process Batch
+        results = []
+        
+        # Setup Scraper ONCE for the batch
+        # For batch scraping, we can reuse one driver to save startup time
+        # Since the batch is small (5 items), memory risk is low
+        search_scraper = GoogleMapsSearchScraper("dummy") # URL doesn't matter here
+        search_scraper.driver = search_scraper.setup_driver()
+        
+        processed_count_in_batch = 0
+        
+        for idx, item in zip(batch_indices, target_items):
+            try:
+                logging.info(f"Processing batch item {idx}: {item['name']}")
+                
+                # Scrape details
+                # Phone
+                phone = search_scraper.extract_phone_from_business_page(item['url'], driver=search_scraper.driver)
+                
+                # Address
+                address = search_scraper.extract_address_from_business_page(item['url'], driver=search_scraper.driver)
+                
+                # Website
+                website = search_scraper.extract_website_from_business_page(item['url'], driver=search_scraper.driver)
+                
+                # Email
+                email = None
+                real_website = website if website else item['url']
+                if real_website and 'http' in real_website:
+                     email = search_scraper.extract_email_from_website(real_website)
+
+                # Prepare Data
+                business_data = {
+                    'company_name': item['name'],
+                    'website_url': website if website else item['url'],
+                    'source_url': job['search_url'],
+                    'address': address,
+                    'phone': phone,
+                    'email': email,
+                    'user_id': user_id
+                }
+                
+                # Save to DB (Incremental Persistence)
+                existing = check_existing_business(user_id, business_data['company_name'], business_data['website_url'])
+                if not existing:
+                    ScrapedData.create(business_data)
+                    logging.info(f"Saved: {item['name']}")
+                
+                # Update Item Status in Memory
+                items[idx]['status'] = 'completed'
+                processed_count_in_batch += 1
+                results.append(business_data)
+                
+            except Exception as e:
+                logging.error(f"Error processing item {item['name']}: {e}")
+                items[idx]['status'] = 'failed' # Mark failed so we don't retry forever in this simple logic
+        
+        # Cleanup Driver
+        search_scraper.driver.quit()
+        
+        # Update Job Progress in DB
+        new_processed_count = job['processed_items'] + processed_count_in_batch
+        status = 'active'
+        if new_processed_count >= job['total_items']:
+            status = 'completed'
+            
+        SearchJob.update_progress(job_id, new_processed_count, items, status=status)
         
         return jsonify({
-            'error': 'Failed to search addresses',
-            'details': str(e)
-        }), 500
+            'results': results,
+            'job_id': job_id,
+            'processed': new_processed_count,
+            'total': job['total_items'],
+            'completed': status == 'completed'
+        }), 200
+
+    except Exception as e:
+        logging.error(f"Batch processing error: {e}")
+        if search_scraper and getattr(search_scraper, 'driver', None):
+            try:
+                search_scraper.driver.quit()
+            except:
+                pass
+        return jsonify({'error': str(e)}), 500
