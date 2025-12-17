@@ -568,10 +568,10 @@ def search_businesses():
             'details': str(e)
         }), 500
 
-@scraper_bp.route('/batch', methods=['POST'])
+@scraper_bp.route('/batch-urls', methods=['POST'])
 @jwt_required()
 def batch_extract():
-    """Extract data from multiple websites"""
+    """Extract data from multiple websites (legacy endpoint)"""
     user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
     
     # Verify user exists
