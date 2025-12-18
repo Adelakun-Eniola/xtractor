@@ -1,0 +1,26 @@
+2025-12-18 06:33:51,901 - INFO - Initialized GoogleMapsSearchScraper for: https://www.google.com/maps/search/Texas+Auto+Repairs
+2025-12-18 06:33:51,901 - INFO - Starting scrape_all_businesses for user 1, limit: 3
+2025-12-18 06:33:51,902 - INFO - Setting up webdriver (headless=True)
+2025-12-18 06:33:52,011 - INFO - ====== WebDriver manager ======
+2025-12-18 06:33:52,555 - INFO - Get LATEST chromedriver version for google-chrome
+2025-12-18 06:33:53,712 - INFO - Get LATEST chromedriver version for google-chrome
+2025-12-18 06:33:54,848 - INFO - Driver [/Users/mac/.wdm/drivers/chromedriver/mac64/143.0.7499.146/chromedriver-mac-x64/chromedriver] found in cache
+2025-12-18 06:33:57,350 - INFO - Using webdriver_manager on macOS
+2025-12-18 06:33:57,351 - INFO - Extracting businesses (limit: 3)
+2025-12-18 06:34:06,575 - INFO - Page loaded, starting business extraction...
+2025-12-18 06:34:10,705 - INFO - Selector '//a[contains(@href, '/maps/place/')]' found 0 links
+2025-12-18 06:34:10,724 - INFO - Selector '//a[contains(@href, 'place/')]' found 0 links
+2025-12-18 06:34:10,742 - INFO - Selector '//div[@role='feed']//a[contains(@href, 'maps')]' found 0 links
+2025-12-18 06:34:10,762 - INFO - Selector '//div[contains(@class, 'm6QErb')]//a' found 4 links
+2025-12-18 06:34:10,762 - INFO - Processing 3 business links...
+2025-12-18 06:34:10,802 - INFO - Successfully extracted 0 businesses
+2025-12-18 06:34:10,804 - INFO - Found 0 business URLs
+2025-12-18 06:34:11,077 - WARNING - Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPConnection(host='localhost', port=64295): Failed to establish a new connection: [Errno 61] Connection refused")': /session/4ea4a76dacf6fb02219cf94a8e2b8f2c
+2025-12-18 06:34:11,080 - WARNING - Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPConnection(host='localhost', port=64295): Failed to establish a new connection: [Errno 61] Connection refused")': /session/4ea4a76dacf6fb02219cf94a8e2b8f2c
+2025-12-18 06:34:11,082 - WARNING - Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError("HTTPConnection(host='localhost', port=64295): Failed to establish a new connection: [Errno 61] Connection refused")': /session/4ea4a76dacf6fb02219cf94a8e2b8f2c
+Testing scraper with URL: https://www.google.com/maps/search/Texas+Auto+Repairs
+
+--- SCRAPING RESULTS ---
+
+--- ERRORS ---
+{'url': 'https://www.google.com/maps/search/Texas+Auto+Repairs', 'error': 'No businesses found'}

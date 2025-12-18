@@ -126,6 +126,124 @@ class WebScraper:
 
         return driver
 
+    def extract_address(self):
+        """Extract address using robust selectors"""
+        try:
+            if "google.com/maps" in self.url:
+                address_selectors = [
+                    "//button[@data-item-id='address']//div[contains(@class, 'fontBodyMedium')]",
+                    "//button[contains(@aria-label, 'Address')]//div[contains(@class, 'fontBodyMedium')]",
+                    "//div[@data-tooltip='Copy address']",
+                    "//button[contains(@data-tooltip, 'Copy address')]//div",
+                    "//div[contains(@class, 'rogA2c')]",  # Address container
+                    "//address", 
+                    "//div[contains(@class, 'Io6YTe') and contains(@class, 'fontBodyMedium')]",
+                    "//button[contains(@aria-label, 'Address')]//div",
+                ]
+                for selector in address_selectors:
+                    try:
+                        element = self.driver.find_element(By.XPATH, selector)
+                        address = element.text.strip()
+                        if address and len(address) > 5:
+                            return address
+                    except NoSuchElementException:
+                        continue
+            else:
+                element = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//address|//div[contains(@class, 'address')]"))
+                )
+                return element.text.strip()
+        except Exception:
+            logging.debug("Address not found")
+        return "N/A"
+
+    def extract_phone(self):
+        """Extract phone using robust selectors"""
+        try:
+            if "google.com/maps" in self.url:
+                phone_selectors = [
+                    "//button[starts-with(@data-item-id, 'phone:tel:')]//div[contains(@class, 'fontBodyMedium')]",
+                    "//button[contains(@data-item-id, 'phone')]//div[contains(@class, 'fontBodyMedium')]",
+                    "//a[contains(@aria-label, 'Phone:')]",
+                    "//button[contains(@aria-label, 'Phone:')]//div",
+                    "//a[starts-with(@href, 'tel:')]",
+                    "//button[contains(@data-tooltip, 'Copy phone')]//div",
+                    "//button[contains(@aria-label, 'Copy phone')]//div",
+                    "//div[contains(@class, 'rogA2c')]//span[contains(text(), '(')]",
+                    "//div[contains(@class, 'Io6YTe') and contains(text(), '(')]", 
+                    "//div[contains(@class, 'Io6YTe') and contains(text(), '+')]",
+                ]
+                for selector in phone_selectors:
+                    try:
+                        element = self.driver.find_element(By.XPATH, selector)
+                        phone = element.text.strip()
+                        
+                        if not phone:
+                            href = element.get_attribute("href")
+                            if href and 'tel:' in href:
+                                phone = href.replace("tel:", "").strip()
+                        
+                        if phone:
+                            validated = self.validate_phone_number(phone)
+                            if validated != "N/A":
+                                return validated
+                    except NoSuchElementException:
+                        continue
+            else:
+                element = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, "//a[contains(@href, 'tel:')]"))
+                )
+                phone = element.text.strip() or element.get_attribute("href").replace("tel:", "")
+                return self.validate_phone_number(phone)
+        except Exception:
+            logging.debug("Phone not found")
+        return "N/A"
+
+    def extract_website(self):
+        """Extract website using robust selectors"""
+        if "google.com/maps" in self.url:
+            try:
+                # PRIORITY 1: Look for the website button/link in Google Maps (most reliable)
+                priority_selectors = [
+                    "//a[@data-item-id='authority']",
+                    "//a[contains(@aria-label, 'Website:')]",
+                    "//a[contains(@aria-label, 'website')]",
+                    "//button[@data-item-id='authority']//following::a[1]",
+                    "//div[contains(@class, 'rogA2c')]//a[contains(@href, 'http')]",
+                ]
+                
+                for selector in priority_selectors:
+                    try:
+                        elements = self.driver.find_elements(By.XPATH, selector)
+                        for element in elements:
+                            href = element.get_attribute("href")
+                            if href and 'google.com/maps' not in href and 'google.com/search' not in href and 'goo.gl' not in href:
+                                return self.validate_url(href)
+                    except:
+                        continue
+                
+                # PRIORITY 2: Try standard selectors
+                website_selectors = [
+                    "//a[contains(@href, 'http') and contains(@aria-label, 'Website')]",
+                    "//a[contains(@data-item-id, 'authority') and contains(@href, 'http')]",
+                    "//a[@data-tooltip='Open website']",
+                    "//div[contains(@class, 'fontBodyMedium')]//a[contains(@href, 'http')]",
+                ]
+                
+                for selector in website_selectors:
+                    try:
+                        element = self.driver.find_element(By.XPATH, selector)
+                        href = element.get_attribute("href")
+                        if href and 'google.com' not in href and 'goo.gl' not in href:
+                            return self.validate_url(href)
+                    except NoSuchElementException:
+                        continue
+            except Exception as e:
+                logging.debug(f"Website not found: {e}")
+        else:
+            return self.validate_url(self.url)
+        return "N/A"
+
     def extract_info(self):
         logging.info(f"Extracting info from: {self.url}")
         
@@ -135,6 +253,11 @@ class WebScraper:
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
             time.sleep(3)
+            
+            # DEBUG: Save page source
+            with open('debug.html', 'w') as f:
+                f.write(self.driver.page_source)
+                
         except TimeoutException:
             logging.warning(f"Timeout navigating to {self.url}")
             return self.data
@@ -168,79 +291,10 @@ class WebScraper:
         except Exception:
             logging.debug("Business name not found")
 
-        # Extract address
-        try:
-            if "google.com/maps" in self.url:
-                address_selectors = [
-                    "//button[@data-item-id='address']//div[contains(@class, 'fontBodyMedium')]",
-                    "//div[@data-tooltip='Copy address']",
-                    "//button[contains(@aria-label, 'Address')]//div",
-                ]
-                for selector in address_selectors:
-                    try:
-                        element = self.driver.find_element(By.XPATH, selector)
-                        address = element.text.strip()
-                        if address and len(address) > 5:
-                            self.data['address'] = address
-                            break
-                    except NoSuchElementException:
-                        continue
-            else:
-                element = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//address|//div[contains(@class, 'address')]"))
-                )
-                self.data['address'] = element.text.strip() or "N/A"
-        except Exception:
-            logging.debug("Address not found")
-
-        # Extract phone
-        try:
-            if "google.com/maps" in self.url:
-                phone_selectors = [
-                    "//button[@data-item-id='phone:tel:']//div[contains(@class, 'fontBodyMedium')]",
-                    "//button[contains(@aria-label, 'Phone')]//div[contains(@class, 'fontBodyMedium')]",
-                    "//a[contains(@href, 'tel:')]",
-                ]
-                for selector in phone_selectors:
-                    try:
-                        element = self.driver.find_element(By.XPATH, selector)
-                        phone = element.text.strip() or element.get_attribute("href", "").replace("tel:", "")
-                        if phone:
-                            self.data['phone'] = self.validate_phone_number(phone)
-                            break
-                    except NoSuchElementException:
-                        continue
-            else:
-                element = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//a[contains(@href, 'tel:')]"))
-                )
-                phone = element.text.strip() or element.get_attribute("href").replace("tel:", "")
-                self.data['phone'] = self.validate_phone_number(phone)
-        except Exception:
-            logging.debug("Phone not found")
-
-        # Extract website
-        if "google.com/maps" in self.url:
-            try:
-                website_selectors = [
-                    "//a[contains(@href, 'http') and contains(@aria-label, 'Website')]",
-                    "//a[contains(@data-item-id, 'authority') and contains(@href, 'http')]",
-                    "//a[@data-tooltip='Open website']",
-                ]
-                
-                for selector in website_selectors:
-                    try:
-                        element = self.driver.find_element(By.XPATH, selector)
-                        href = element.get_attribute("href")
-                        if href and 'google.com' not in href and 'goo.gl' not in href:
-                            self.data['website_url'] = self.validate_url(href)
-                            break
-                    except NoSuchElementException:
-                        continue
-            except Exception as e:
-                logging.debug(f"Website not found: {e}")
-        else:
-            self.data['website_url'] = self.validate_url(self.url)
+        # Extract using new robust methods
+        self.data['address'] = self.extract_address()
+        self.data['phone'] = self.extract_phone()
+        self.data['website_url'] = self.extract_website()
 
         # Extract email
         try:
@@ -572,7 +626,7 @@ class GoogleMapsSearchScraper:
                             'email': scraped_data.get('email', 'N/A'),
                             'phone': scraped_data.get('phone', 'N/A'),
                             'address': scraped_data.get('address', 'N/A'),
-                            'website_url': scraped_data.get('website_url', business_url),
+                            'website_url': scraped_data.get('website_url', 'N/A'),
                             'scraped_at': datetime.utcnow().isoformat(),
                             'source_url': self.search_url
                         })

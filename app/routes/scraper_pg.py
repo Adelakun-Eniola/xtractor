@@ -388,16 +388,21 @@ def process_batch():
                 # Website
                 website = search_scraper.extract_website_from_business_page(item['url'], driver=search_scraper.driver)
                 
-                # Email
+                # Email (Deep Scraping)
                 email = None
-                real_website = website if website else item['url']
-                if real_website and 'http' in real_website:
-                     email = search_scraper.extract_email_from_website(real_website)
+                if website and 'http' in website:
+                    # STRICTLY avoid deep scraping if it looks like a Google URL (already filtered by scraper, but double check)
+                    if 'google.com' not in website:
+                        try:
+                            logging.info(f"Deep scraping email from: {website}")
+                            email = search_scraper.extract_email_from_website(website, driver=None) # Create new driver for deep scrape to avoid state issues
+                        except Exception as deep_err:
+                            logging.warning(f"Deep scraping error for {website}: {deep_err}")
 
                 # Prepare Data
                 business_data = {
                     'company_name': item['name'],
-                    'website_url': website if website else item['url'],
+                    'website_url': website if website else None, # Do NOT fallback to item['url']
                     'source_url': job['search_url'],
                     'address': address,
                     'phone': phone,
