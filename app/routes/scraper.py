@@ -1184,7 +1184,7 @@ def init_search_job():
 @scraper_bp.route('/batch', methods=['POST'])
 @jwt_required()
 def process_batch():
-    """Process 1 business per batch - optimized for Render 512MB memory limit.
+    """Process 1 business per batch - NO TIMEOUTS, let scraping complete naturally.
     
     Flow per business:
     1. Fresh driver -> Google Maps page -> extract phone, address, website (all from same page)
@@ -1194,10 +1194,9 @@ def process_batch():
     5. Save to DB
     
     Key optimizations:
-    - Only 2 driver instances per business (not 4)
-    - Short timeouts (10s for Maps, 8s for website)
+    - No page load timeouts - let pages load fully
     - Aggressive garbage collection
-    - Graceful handling of driver crashes with retry
+    - Graceful handling of driver crashes
     """
     import gc
     import subprocess
@@ -1272,102 +1271,67 @@ def process_batch():
         time.sleep(0.5)
         
         # STEP 1: Extract from Google Maps (phone, address, website) - ALL FROM SAME PAGE
-        max_retries = 2
-        for attempt in range(max_retries):
+        try:
+            search_scraper = GoogleMapsSearchScraper("dummy")
+            search_scraper.driver = search_scraper.setup_driver()
+            # NO page load timeout - let it take as long as needed
+            
             try:
-                search_scraper = GoogleMapsSearchScraper("dummy")
-                search_scraper.driver = search_scraper.setup_driver()
-                search_scraper.driver.set_page_load_timeout(10)  # Increased from 8s for stability
+                logging.info(f"Loading Google Maps page for: {target_item['name']}")
+                search_scraper.driver.get(target_item['url'])
+                time.sleep(3)  # Wait for page to fully load
+                logging.info(f"Page loaded for: {target_item['name']}")
                 
+                # Extract all from same page load - no navigation between extractions
                 try:
-                    search_scraper.driver.get(target_item['url'])
-                    time.sleep(2)  # Increased from 1.5s for page to fully load
+                    phone = search_scraper.extract_phone_from_business_page(target_item['url'], driver=search_scraper.driver)
+                    logging.info(f"Phone: {phone or 'N/A'}")
+                except Exception as e:
+                    logging.warning(f"Phone extraction failed: {str(e)[:50]}")
                     
-                    # Extract all from same page load - no navigation between extractions
-                    try:
-                        phone = search_scraper.extract_phone_from_business_page(target_item['url'], driver=search_scraper.driver)
-                        logging.info(f"Phone: {phone or 'N/A'}")
-                    except Exception as e:
-                        logging.warning(f"Phone extraction failed: {str(e)[:50]}")
-                        
-                    try:
-                        address = search_scraper.extract_address_from_business_page(target_item['url'], driver=search_scraper.driver)
-                        logging.info(f"Address: {address or 'N/A'}")
-                    except Exception as e:
-                        logging.warning(f"Address extraction failed: {str(e)[:50]}")
-                        
-                    try:
-                        website = search_scraper.extract_website_from_business_page(target_item['url'], driver=search_scraper.driver)
-                        logging.info(f"Website: {website or 'N/A'}")
-                    except Exception as e:
-                        logging.warning(f"Website extraction failed: {str(e)[:50]}")
+                try:
+                    address = search_scraper.extract_address_from_business_page(target_item['url'], driver=search_scraper.driver)
+                    logging.info(f"Address: {address or 'N/A'}")
+                except Exception as e:
+                    logging.warning(f"Address extraction failed: {str(e)[:50]}")
                     
-                    # Success - break out of retry loop
-                    break
-                        
-                except TimeoutException:
-                    logging.warning(f"Google Maps page timeout for {target_item['name']} (attempt {attempt + 1})")
-                    if attempt < max_retries - 1:
-                        safe_quit_driver(search_scraper)
-                        kill_zombie_chrome()
-                        gc.collect()
-                        time.sleep(1)
-                        continue
-                except WebDriverException as e:
-                    logging.warning(f"WebDriver error on Maps page (attempt {attempt + 1}): {str(e)[:100]}")
-                    if attempt < max_retries - 1:
-                        safe_quit_driver(search_scraper)
-                        kill_zombie_chrome()
-                        gc.collect()
-                        time.sleep(1)
-                        continue
-                except Exception as nav_err:
-                    logging.warning(f"Navigation failed (attempt {attempt + 1}): {str(nav_err)[:100]}")
-                    if attempt < max_retries - 1:
-                        safe_quit_driver(search_scraper)
-                        kill_zombie_chrome()
-                        gc.collect()
-                        time.sleep(1)
-                        continue
+                try:
+                    website = search_scraper.extract_website_from_business_page(target_item['url'], driver=search_scraper.driver)
+                    logging.info(f"Website: {website or 'N/A'}")
+                except Exception as e:
+                    logging.warning(f"Website extraction failed: {str(e)[:50]}")
                     
-            except Exception as driver_err:
-                logging.error(f"Driver setup failed (attempt {attempt + 1}): {str(driver_err)[:100]}")
-                if attempt < max_retries - 1:
-                    kill_zombie_chrome()
-                    gc.collect()
-                    time.sleep(1)
-                    continue
-            finally:
-                # Always close driver after Google Maps extraction
-                safe_quit_driver(search_scraper)
-                gc.collect()
-                time.sleep(0.3)  # Brief pause for cleanup
+            except WebDriverException as e:
+                logging.warning(f"WebDriver error on Maps page: {str(e)[:100]}")
+            except Exception as nav_err:
+                logging.warning(f"Navigation failed: {str(nav_err)[:100]}")
+                
+        except Exception as driver_err:
+            logging.error(f"Driver setup failed: {str(driver_err)[:100]}")
+        finally:
+            # Always close driver after Google Maps extraction
+            safe_quit_driver(search_scraper)
+            gc.collect()
+            time.sleep(0.3)  # Brief pause for cleanup
         
         # STEP 2: Extract email from business website (if we have one and not skipped)
         if not skip_email and website and 'google.com' not in website and 'goo.gl' not in website:
-            for email_attempt in range(2):  # Retry once on failure
-                try:
-                    logging.info(f"Extracting email from: {website} (attempt {email_attempt + 1})")
-                    search_scraper = GoogleMapsSearchScraper("dummy")
-                    search_scraper.driver = search_scraper.setup_driver()
-                    search_scraper.driver.set_page_load_timeout(8)  # Increased from 6s for stability
-                    
-                    email = search_scraper.extract_email_from_website(website, driver=search_scraper.driver)
-                    logging.info(f"Email: {email or 'N/A'}")
-                    break  # Success - exit retry loop
-                    
-                except TimeoutException:
-                    logging.warning(f"Website timeout for email extraction (attempt {email_attempt + 1})")
-                except WebDriverException as e:
-                    logging.warning(f"WebDriver error on website (attempt {email_attempt + 1}): {str(e)[:100]}")
-                except Exception as email_err:
-                    logging.warning(f"Email extraction failed (attempt {email_attempt + 1}): {str(email_err)[:100]}")
-                finally:
-                    safe_quit_driver(search_scraper)
-                    gc.collect()
-                    if email_attempt < 1:  # If we're going to retry
-                        kill_zombie_chrome()
-                        time.sleep(0.5)
+            try:
+                logging.info(f"Extracting email from: {website}")
+                search_scraper = GoogleMapsSearchScraper("dummy")
+                search_scraper.driver = search_scraper.setup_driver()
+                # NO page load timeout - let it take as long as needed
+                
+                email = search_scraper.extract_email_from_website(website, driver=search_scraper.driver)
+                logging.info(f"Email: {email or 'N/A'}")
+                
+            except WebDriverException as e:
+                logging.warning(f"WebDriver error on website: {str(e)[:100]}")
+            except Exception as email_err:
+                logging.warning(f"Email extraction failed: {str(email_err)[:100]}")
+            finally:
+                safe_quit_driver(search_scraper)
+                gc.collect()
 
         # Prepare business data
         final_website = website if (website and 'google.com' not in website) else None
