@@ -883,11 +883,17 @@ class GoogleMapsSearchScraper:
             if not base_url.startswith('http'):
                 base_url = 'https://' + base_url
             
-            # Try contact/about pages FIRST (more likely to have emails)
-            contact_paths = ['/contact', '/contact-us', '/about', '/about-us', '/contactus']
-            pages_to_try = [base_url] + [base_url + path for path in contact_paths]
+            # Try contact/about pages FIRST (most likely to have emails)
+            # Priority order: contact pages first, then about, then home
+            contact_paths = [
+                '/contact', '/contact-us', '/contactus', '/contact.html',
+                '/about', '/about-us', '/aboutus', '/about.html',
+                '/get-in-touch', '/reach-us', '/connect',
+                ''  # Home page last
+            ]
+            pages_to_try = [base_url + path for path in contact_paths]
             
-            for page_url in pages_to_try[:3]:  # Limit to 3 pages max
+            for page_url in pages_to_try[:4]:  # Try up to 4 pages
                 try:
                     logging.info(f"Checking page for email: {page_url}")
                     temp_driver.get(page_url)

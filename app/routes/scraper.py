@@ -1184,14 +1184,30 @@ def init_search_job():
 @scraper_bp.route('/batch', methods=['POST'])
 @jwt_required()
 def process_batch():
-    """Process a small batch of a SearchJob - optimized for Render 512MB limit"""
+    """Process 1 business per batch - optimized for Render 512MB memory limit.
+    
+    Flow per business:
+    1. Fresh driver -> Google Maps page -> extract phone, address, website (all from same page)
+    2. Close driver, garbage collect
+    3. Fresh driver -> Business website -> extract email (contact page priority)
+    4. Close driver, garbage collect
+    5. Save to DB
+    
+    Key optimizations:
+    - Only 2 driver instances per business (not 4)
+    - Short timeouts (8s for Maps, 6s for website)
+    - Aggressive garbage collection
+    - Graceful handling of driver crashes
+    """
+    import gc
+    
     search_scraper = None
+    
     try:
-        user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
+        user_id = int(get_jwt_identity())
         data = request.get_json()
         job_id = data.get('job_id')
-        limit = min(data.get('limit', 2), 3)  # Max 3 businesses per batch for memory
-        skip_email = data.get('skip_email', False)  # Option to skip slow email extraction
+        skip_email = data.get('skip_email', False)  # Option to skip email for faster scraping
         
         if not job_id:
             return jsonify({'error': 'Job ID required'}), 400
@@ -1206,103 +1222,140 @@ def process_batch():
             
         items = job['items']
         
-        # Identify next batch
-        batch_indices = []
-        target_items = []
+        # Find next pending item
+        target_idx = None
+        target_item = None
         
         for i, item in enumerate(items):
             if item['status'] == 'pending':
-                batch_indices.append(i)
-                target_items.append(item)
-                if len(batch_indices) >= limit:
-                    break
+                target_idx = i
+                target_item = item
+                break
         
-        if not target_items:
-            # Mark job complete if no pending items
+        if target_item is None:
             SearchJob.update_progress(job_id, job['processed_items'], items, status='completed')
             return jsonify({'message': 'Job complete', 'completed': True, 'results': []}), 200
             
-        # Process Batch
         results = []
+        phone = None
+        address = None
+        website = None
+        email = None
         
-        # Setup Scraper ONCE for the batch
-        search_scraper = GoogleMapsSearchScraper("dummy")
-        search_scraper.driver = search_scraper.setup_driver()
-        search_scraper.driver.set_page_load_timeout(20)  # 20 sec timeout for slower pages
+        logging.info(f"=== Processing [{target_idx + 1}/{len(items)}]: {target_item['name']} ===")
         
-        processed_count_in_batch = 0
-        
-        for idx, item in zip(batch_indices, target_items):
+        # STEP 1: Extract from Google Maps (phone, address, website) - ALL FROM SAME PAGE
+        try:
+            search_scraper = GoogleMapsSearchScraper("dummy")
+            search_scraper.driver = search_scraper.setup_driver()
+            search_scraper.driver.set_page_load_timeout(8)  # Reduced from 12s
+            
             try:
-                logging.info(f"Processing batch item {idx}: {item['name']}")
+                search_scraper.driver.get(target_item['url'])
+                time.sleep(1.5)  # Reduced from 2s
                 
-                # Navigate to the business page ONCE
+                # Extract all from same page load - no navigation between extractions
                 try:
-                    search_scraper.driver.get(item['url'])
-                    time.sleep(2)  # Wait for page to load
-                except Exception as nav_err:
-                    logging.warning(f"Navigation error for {item['name']}: {nav_err}")
+                    phone = search_scraper.extract_phone_from_business_page(target_item['url'], driver=search_scraper.driver)
+                    logging.info(f"Phone: {phone or 'N/A'}")
+                except Exception as e:
+                    logging.warning(f"Phone extraction failed: {str(e)[:50]}")
+                    
+                try:
+                    address = search_scraper.extract_address_from_business_page(target_item['url'], driver=search_scraper.driver)
+                    logging.info(f"Address: {address or 'N/A'}")
+                except Exception as e:
+                    logging.warning(f"Address extraction failed: {str(e)[:50]}")
+                    
+                try:
+                    website = search_scraper.extract_website_from_business_page(target_item['url'], driver=search_scraper.driver)
+                    logging.info(f"Website: {website or 'N/A'}")
+                except Exception as e:
+                    logging.warning(f"Website extraction failed: {str(e)[:50]}")
+                    
+            except TimeoutException:
+                logging.warning(f"Google Maps page timeout for {target_item['name']}")
+            except WebDriverException as e:
+                logging.warning(f"WebDriver error on Maps page: {str(e)[:100]}")
+            except Exception as nav_err:
+                logging.warning(f"Navigation failed: {str(nav_err)[:100]}")
                 
-                # Extract all data from the same page (more efficient)
-                phone = search_scraper.extract_phone_from_business_page(item['url'], driver=search_scraper.driver)
-                address = search_scraper.extract_address_from_business_page(item['url'], driver=search_scraper.driver)
-                website = search_scraper.extract_website_from_business_page(item['url'], driver=search_scraper.driver)
+        except Exception as driver_err:
+            logging.error(f"Driver setup failed: {str(driver_err)[:100]}")
+        finally:
+            # Always close driver after Google Maps extraction
+            if search_scraper and search_scraper.driver:
+                try:
+                    search_scraper.driver.quit()
+                except:
+                    pass
+                search_scraper.driver = None
+            gc.collect()
+            time.sleep(0.3)  # Brief pause for cleanup
+        
+        # STEP 2: Extract email from business website (if we have one and not skipped)
+        if not skip_email and website and 'google.com' not in website and 'goo.gl' not in website:
+            try:
+                logging.info(f"Extracting email from: {website}")
+                search_scraper = GoogleMapsSearchScraper("dummy")
+                search_scraper.driver = search_scraper.setup_driver()
+                search_scraper.driver.set_page_load_timeout(6)  # Reduced from 10s
                 
-                logging.info(f"Extracted for {item['name']}: phone={phone}, address={address}, website={website}")
+                email = search_scraper.extract_email_from_website(website, driver=search_scraper.driver)
+                logging.info(f"Email: {email or 'N/A'}")
                 
-                # Email extraction - try if we have a valid website
-                email = None
-                if not skip_email and website and 'google.com' not in website and 'goo.gl' not in website:
+            except TimeoutException:
+                logging.warning(f"Website timeout for email extraction")
+            except WebDriverException as e:
+                logging.warning(f"WebDriver error on website: {str(e)[:100]}")
+            except Exception as email_err:
+                logging.warning(f"Email extraction failed: {str(email_err)[:100]}")
+            finally:
+                if search_scraper and search_scraper.driver:
                     try:
-                        logging.info(f"Extracting email from website: {website}")
-                        email = search_scraper.extract_email_from_website(website, driver=search_scraper.driver)
-                        logging.info(f"Email result for {item['name']}: {email}")
-                    except Exception as email_err:
-                        logging.warning(f"Email extraction failed for {item['name']}: {email_err}")
+                        search_scraper.driver.quit()
+                    except:
+                        pass
+                    search_scraper.driver = None
+                gc.collect()
 
-                # Prepare Data - use actual website URL, not Google Maps URL
-                final_website = website if (website and 'google.com' not in website) else None
-                
-                business_data = {
-                    'company_name': item['name'],
-                    'website_url': final_website if final_website else item['url'],
-                    'source_url': job['search_url'],
-                    'address': address,
-                    'phone': phone,
-                    'email': email,
-                    'user_id': user_id
-                }
-                
-                # Save to DB immediately (incremental persistence)
-                existing = check_existing_business(user_id, business_data['company_name'], business_data['website_url'])
-                if not existing:
-                    ScrapedData.create(business_data)
-                    logging.info(f"Saved: {item['name']}")
-                
-                items[idx]['status'] = 'completed'
-                processed_count_in_batch += 1
-                results.append(business_data)
-                
-            except Exception as e:
-                logging.error(f"Error processing item {item['name']}: {e}")
-                import traceback
-                logging.error(traceback.format_exc())
-                items[idx]['status'] = 'failed'
+        # Prepare business data
+        final_website = website if (website and 'google.com' not in website) else None
         
-        # Cleanup Driver
-        search_scraper.driver.quit()
-        import gc
-        gc.collect()  # Force garbage collection
+        business_data = {
+            'company_name': target_item['name'],
+            'website_url': final_website if final_website else target_item['url'],
+            'source_url': job['search_url'],
+            'address': address,
+            'phone': phone,
+            'email': email,
+            'user_id': user_id
+        }
         
-        # Update Job Progress in DB
-        new_processed_count = job['processed_items'] + processed_count_in_batch
+        # Save to DB
+        try:
+            existing = check_existing_business(user_id, business_data['company_name'], business_data['website_url'])
+            if not existing:
+                ScrapedData.create(business_data)
+                logging.info(f"Saved to DB: {target_item['name']}")
+            else:
+                logging.info(f"Already exists in DB: {target_item['name']}")
+        except Exception as db_err:
+            logging.error(f"DB save error: {str(db_err)[:100]}")
+        
+        items[target_idx]['status'] = 'completed'
+        results.append(business_data)
+        logging.info(f"=== Completed: {target_item['name']} ===")
+        
+        # Update Job Progress
+        new_processed_count = job['processed_items'] + 1
         status = 'active'
         if new_processed_count >= job['total_items']:
             status = 'completed'
             
         SearchJob.update_progress(job_id, new_processed_count, items, status=status)
         
-        logging.info(f"Batch complete: processed {processed_count_in_batch} items, total {new_processed_count}/{job['total_items']}")
+        logging.info(f"Progress: {new_processed_count}/{job['total_items']}")
         
         return jsonify({
             'results': results,
@@ -1313,12 +1366,25 @@ def process_batch():
         }), 200
 
     except Exception as e:
-        logging.error(f"Batch processing error: {e}")
+        logging.error(f"Batch error: {e}")
         import traceback
         logging.error(traceback.format_exc())
-        if search_scraper and getattr(search_scraper, 'driver', None):
+        
+        # Mark item as failed if we have target_idx
+        if target_idx is not None and items:
+            items[target_idx]['status'] = 'failed'
+            try:
+                SearchJob.update_progress(job_id, job['processed_items'] + 1, items)
+            except:
+                pass
+        
+        gc.collect()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        # Final cleanup
+        if search_scraper and search_scraper.driver:
             try:
                 search_scraper.driver.quit()
             except:
                 pass
-        return jsonify({'error': str(e)}), 500
+        gc.collect()
