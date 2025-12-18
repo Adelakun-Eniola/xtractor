@@ -347,31 +347,41 @@ class GoogleMapsSearchScraper:
         scraper = WebScraper(self.search_url)
         return scraper.setup_driver(headless)
     
-    def scroll_results_panel(self, max_scrolls=5):
+    def scroll_results_panel(self, max_scrolls=50):
+        """Scroll the results panel to load ALL available businesses.
+        
+        Args:
+            max_scrolls: Maximum number of scroll attempts (default 50 for comprehensive results)
+        """
         try:
             WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(2)
+            time.sleep(3)  # Wait for initial load
             
             panel_selectors = [
                 (By.CSS_SELECTOR, "div[role='feed']"),
                 (By.CSS_SELECTOR, "div.m6QErb"),
+                (By.CSS_SELECTOR, "div.m6QErb.DxyBCb"),
             ]
             
             panel_element = None
             for selector_type, selector_value in panel_selectors:
                 try:
                     panel_element = self.driver.find_element(selector_type, selector_value)
+                    logging.info(f"Found scrollable panel with selector: {selector_value}")
                     break
                 except NoSuchElementException:
                     continue
             
             if not panel_element:
+                logging.warning("Could not find scrollable results panel")
                 return
             
             consecutive_no_change = 0
             previous_count = 0
+            
+            logging.info(f"Starting scroll loop (max {max_scrolls} scrolls)...")
             
             for scroll_attempt in range(max_scrolls):
                 try:
@@ -379,43 +389,55 @@ class GoogleMapsSearchScraper:
                         By.XPATH, "//a[contains(@href, '/maps/place/')]"
                     )
                     current_count = len(business_links)
+                    logging.info(f"Scroll {scroll_attempt + 1}: Found {current_count} businesses")
                 except:
                     current_count = previous_count
                 
                 if current_count == previous_count:
                     consecutive_no_change += 1
-                    if consecutive_no_change >= 2:
+                    # Stop after 5 consecutive scrolls with no new results (end of list)
+                    if consecutive_no_change >= 5:
+                        logging.info(f"No new results after {consecutive_no_change} scrolls - reached end of list")
                         break
                 else:
                     consecutive_no_change = 0
                     previous_count = current_count
                 
                 try:
+                    # Scroll to bottom of panel
                     self.driver.execute_script(
                         "arguments[0].scrollTop = arguments[0].scrollHeight", 
                         panel_element
                     )
-                    time.sleep(2)
-                except:
+                    time.sleep(2)  # Wait for lazy loading
+                except Exception as scroll_err:
+                    logging.warning(f"Scroll error: {scroll_err}")
                     break
+            
+            logging.info(f"Scrolling complete. Total businesses found: {previous_count}")
                     
         except Exception as e:
-            logging.debug(f"Scrolling error: {e}")
+            logging.warning(f"Scrolling error: {e}")
     
-    def extract_businesses_with_names(self, limit=20):
-        logging.info(f"Extracting businesses (limit: {limit})")
+    def extract_businesses_with_names(self, limit=None):
+        """Extract ALL businesses from Google Maps search results.
+        
+        Args:
+            limit: Optional limit on number of businesses (None = get ALL)
+        """
+        logging.info(f"Extracting businesses (limit: {'unlimited' if limit is None else limit})")
         
         try:
             self.driver.get(self.search_url)
             WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(5)  # Increased wait time for Google Maps to load
+            time.sleep(5)  # Wait for Google Maps to fully load
             
             logging.info("Page loaded, starting business extraction...")
             
-            # Try to scroll and load more results
-            self.scroll_results_panel()
+            # Scroll to load ALL results (no limit on scrolling)
+            self.scroll_results_panel(max_scrolls=100)  # Allow up to 100 scrolls
             
             businesses = []
             seen_urls = set()
@@ -436,7 +458,7 @@ class GoogleMapsSearchScraper:
                     links = self.driver.find_elements(By.XPATH, selector)
                     logging.info(f"Selector '{selector}' found {len(links)} links")
                     if links:
-                        business_links = links[:limit]
+                        business_links = links  # Get ALL links, no slicing
                         break
                 except Exception as e:
                     logging.debug(f"Selector '{selector}' failed: {e}")
@@ -444,11 +466,9 @@ class GoogleMapsSearchScraper:
             
             if not business_links:
                 logging.warning("No business links found with any selector")
-                # Try to get page source for debugging
                 page_source = self.driver.page_source
                 logging.debug(f"Page source length: {len(page_source)}")
                 
-                # Check for common Google Maps indicators
                 if "maps" in page_source.lower():
                     logging.info("Page contains 'maps' - likely on Google Maps")
                 if "place/" in page_source:
@@ -462,17 +482,14 @@ class GoogleMapsSearchScraper:
                 try:
                     href = link.get_attribute("href")
                     if not href:
-                        logging.debug(f"Link {i+1}: No href attribute")
                         continue
                     
                     # More flexible URL checking
                     if not any(pattern in href for pattern in ['/maps/place/', 'place/', 'maps']):
-                        logging.debug(f"Link {i+1}: Not a maps place URL: {href[:50]}...")
                         continue
                     
                     base_url = href.split('?')[0] if '?' in href else href
                     if base_url in seen_urls:
-                        logging.debug(f"Link {i+1}: Duplicate URL")
                         continue
                     seen_urls.add(base_url)
                     
@@ -481,7 +498,6 @@ class GoogleMapsSearchScraper:
                     
                     # Method 1: Look for name in nearby elements
                     try:
-                        # Try different name selectors
                         name_selectors = [
                             ".//div[contains(@class, 'fontHeadlineSmall')]",
                             ".//div[contains(@class, 'fontHeadlineLarge')]", 
@@ -520,14 +536,14 @@ class GoogleMapsSearchScraper:
                     except Exception as name_error:
                         logging.debug(f"Error extracting name for link {i+1}: {name_error}")
                     
-                    logging.info(f"Found business {len(businesses)+1}: {business_name}")
-                    
                     businesses.append({
                         'name': business_name,
                         'url': href
                     })
                     
-                    if len(businesses) >= limit:
+                    # Only apply limit if specified
+                    if limit is not None and len(businesses) >= limit:
+                        logging.info(f"Reached limit of {limit} businesses")
                         break
                     
                 except Exception as e:
@@ -543,7 +559,12 @@ class GoogleMapsSearchScraper:
             logging.error(f"Traceback: {traceback.format_exc()}")
             return []
     
-    def extract_business_urls(self, limit=20):
+    def extract_business_urls(self, limit=None):
+        """Extract business URLs from search results.
+        
+        Args:
+            limit: Optional limit on number of businesses (None = get ALL)
+        """
         businesses = self.extract_businesses_with_names(limit)
         return [business['url'] for business in businesses]
     
@@ -914,7 +935,8 @@ class GoogleMapsSearchScraper:
     def extract_email_from_website(self, website_url, driver=None):
         """
         Extract email address from a business website.
-        Tries contact/about pages first for faster results.
+        PRIORITY: mailto: links in anchor tags (most reliable)
+        Then falls back to regex search in page source.
         
         Args:
             website_url: URL of the business website
@@ -941,19 +963,18 @@ class GoogleMapsSearchScraper:
             else:
                 temp_driver = self.setup_driver()
                 created_driver = True
-                
-            temp_driver.set_page_load_timeout(10)  # 10 second max
             
             # Email regex pattern
             email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
             
-            # Excluded domains
+            # Excluded domains (common false positives)
             excluded_domains = [
                 'example.com', 'test.com', 'gmail.com', 'yahoo.com', 'hotmail.com',
                 'outlook.com', 'facebook.com', 'twitter.com', 'instagram.com',
                 'linkedin.com', 'youtube.com', 'google.com', 'microsoft.com',
                 'apple.com', 'amazon.com', 'noreply', 'no-reply', 'sentry.io',
-                'wixpress.com', 'schema.org', 'w3.org'
+                'wixpress.com', 'schema.org', 'w3.org', 'gravatar.com',
+                'wordpress.com', 'cloudflare.com', 'jsdelivr.net'
             ]
             
             # Get base URL for constructing contact page URLs
@@ -961,49 +982,90 @@ class GoogleMapsSearchScraper:
             if not base_url.startswith('http'):
                 base_url = 'https://' + base_url
             
-            # Try contact/about pages FIRST (most likely to have emails)
-            # Priority order: contact pages first, then about, then home
+            # Pages to check - contact pages are most likely to have emails
             contact_paths = [
-                '/contact', '/contact-us', '/contactus', '/contact.html',
+                '/contact', '/contact-us', '/contactus', '/contact.html', '/contact.php',
                 '/about', '/about-us', '/aboutus', '/about.html',
-                '/get-in-touch', '/reach-us', '/connect',
+                '/get-in-touch', '/reach-us', '/connect', '/support',
                 ''  # Home page last
             ]
             pages_to_try = [base_url + path for path in contact_paths]
             
-            for page_url in pages_to_try[:4]:  # Try up to 4 pages
+            for page_url in pages_to_try[:5]:  # Try up to 5 pages
                 try:
                     logging.info(f"Checking page for email: {page_url}")
                     temp_driver.get(page_url)
-                    time.sleep(1)
+                    time.sleep(2)  # Wait for page to load
                     
-                    # Quick check for mailto links first
+                    # PRIORITY 1: Look for mailto: links in anchor tags (MOST RELIABLE)
+                    # This is the standard way websites provide clickable email links
+                    mailto_selectors = [
+                        "//a[starts-with(@href, 'mailto:')]",
+                        "//a[contains(@href, 'mailto:')]",
+                        "//*[contains(@href, 'mailto:')]",
+                    ]
+                    
+                    for selector in mailto_selectors:
+                        try:
+                            mailto_links = temp_driver.find_elements(By.XPATH, selector)
+                            for link in mailto_links:
+                                href = link.get_attribute("href")
+                                if href and 'mailto:' in href:
+                                    # Extract email from mailto: URI
+                                    email = href.replace("mailto:", "").strip()
+                                    # Remove any query parameters (?subject=..., etc)
+                                    if '?' in email:
+                                        email = email.split('?')[0]
+                                    # Remove any URL encoding
+                                    email = email.replace('%40', '@')
+                                    
+                                    if re.match(email_pattern, email):
+                                        email = email.lower()
+                                        if not any(ex in email for ex in excluded_domains):
+                                            logging.info(f"Found email from mailto: link: {email}")
+                                            if created_driver:
+                                                temp_driver.quit()
+                                            return email
+                        except:
+                            continue
+                    
+                    # PRIORITY 2: Look for email in visible text near "email" labels
                     try:
-                        mailto_links = temp_driver.find_elements(By.XPATH, "//a[contains(@href, 'mailto:')]")
-                        for link in mailto_links:
-                            href = link.get_attribute("href")
-                            if href and 'mailto:' in href:
-                                email = href.replace("mailto:", "").strip()
-                                if '?' in email:
-                                    email = email.split('?')[0]
-                                if re.match(email_pattern, email):
-                                    email = email.lower()
-                                    if not any(ex in email for ex in excluded_domains):
-                                        logging.info(f"Found email from mailto: {email}")
-                                        if created_driver:
-                                            temp_driver.quit()
-                                        return email
+                        email_label_selectors = [
+                            "//*[contains(text(), 'Email')]/following-sibling::*",
+                            "//*[contains(text(), 'email')]/following-sibling::*",
+                            "//*[contains(text(), 'E-mail')]/following-sibling::*",
+                            "//a[contains(text(), '@')]",
+                            "//span[contains(text(), '@')]",
+                            "//p[contains(text(), '@')]",
+                        ]
+                        for selector in email_label_selectors:
+                            try:
+                                elements = temp_driver.find_elements(By.XPATH, selector)
+                                for elem in elements:
+                                    text = elem.text.strip()
+                                    if text:
+                                        found_emails = re.findall(email_pattern, text)
+                                        for email in found_emails:
+                                            email = email.lower()
+                                            if not any(ex in email for ex in excluded_domains):
+                                                logging.info(f"Found email from label: {email}")
+                                                if created_driver:
+                                                    temp_driver.quit()
+                                                return email
+                            except:
+                                continue
                     except:
                         pass
                     
-                    # Search page source
+                    # PRIORITY 3: Search entire page source for email patterns
                     page_source = temp_driver.page_source
                     emails = re.findall(email_pattern, page_source)
                     
                     for email in emails:
                         email = email.lower().strip()
                         if not any(ex in email for ex in excluded_domains):
-                            logging.info(f"Found email: {email}")
+                            logging.info(f"Found email from page source: {email}")
                             if created_driver:
                                 temp_driver.quit()
                             return email
