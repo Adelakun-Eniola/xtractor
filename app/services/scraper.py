@@ -817,92 +817,111 @@ class GoogleMapsSearchScraper:
                         pass
             return None
 
-    def extract_email_from_website(self, website_url):
+    def extract_email_from_website(self, website_url, driver=None):
         """
         Extract email address from a business website.
+        Tries contact/about pages first for faster results.
         
         Args:
             website_url: URL of the business website
+            driver: Optional existing webdriver to reuse
             
         Returns:
             Email address string or None if not found
         """
+        temp_driver = None
+        created_driver = False
+        
         try:
-            # Skip if no website URL
+            # Skip if no website URL or if it's a Google Maps URL
             if not website_url or website_url == 'N/A':
+                return None
+            if 'google.com/maps' in website_url or 'goo.gl' in website_url:
                 return None
                 
             logging.info(f"Extracting email from website: {website_url}")
             
-            # Setup a temporary driver for this extraction
-            temp_driver = self.setup_driver()
-            temp_driver.get(website_url)
-            WebDriverWait(temp_driver, 10).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            time.sleep(3)  # Allow page to fully load
+            # Reuse driver if provided, otherwise create new one
+            if driver:
+                temp_driver = driver
+            else:
+                temp_driver = self.setup_driver()
+                created_driver = True
+                
+            temp_driver.set_page_load_timeout(10)  # 10 second max
             
             # Email regex pattern
             email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
             
-            # Method 1: Look for mailto links
-            try:
-                mailto_links = temp_driver.find_elements(By.XPATH, "//a[contains(@href, 'mailto:')]")
-                for link in mailto_links:
-                    href = link.get_attribute("href")
-                    if href and 'mailto:' in href:
-                        email = href.replace("mailto:", "").strip()
-                        # Clean up any additional parameters
-                        if '?' in email:
-                            email = email.split('?')[0]
-                        if re.match(email_pattern, email):
-                            logging.info(f"Found email from mailto link: {email}")
-                            temp_driver.quit()
-                            return email
-            except Exception as e:
-                logging.warning(f"Error checking mailto links: {e}")
+            # Excluded domains
+            excluded_domains = [
+                'example.com', 'test.com', 'gmail.com', 'yahoo.com', 'hotmail.com',
+                'outlook.com', 'facebook.com', 'twitter.com', 'instagram.com',
+                'linkedin.com', 'youtube.com', 'google.com', 'microsoft.com',
+                'apple.com', 'amazon.com', 'noreply', 'no-reply', 'sentry.io',
+                'wixpress.com', 'schema.org', 'w3.org'
+            ]
             
-            # Method 2: Search page source for email patterns
-            try:
-                page_source = temp_driver.page_source
-                emails = re.findall(email_pattern, page_source)
-                
-                # Filter out common non-business emails
-                excluded_domains = [
-                    'example.com', 'test.com', 'gmail.com', 'yahoo.com', 'hotmail.com',
-                    'outlook.com', 'facebook.com', 'twitter.com', 'instagram.com',
-                    'linkedin.com', 'youtube.com', 'google.com', 'microsoft.com',
-                    'apple.com', 'amazon.com', 'noreply', 'no-reply'
-                ]
-                
-                for email in emails:
-                    email = email.lower().strip()
-                    # Skip if it contains excluded domains or patterns
-                    if not any(excluded in email for excluded in excluded_domains):
-                        # Prefer emails that match the website domain
-                        website_domain = website_url.replace('https://', '').replace('http://', '').replace('www.', '').split('/')[0]
-                        if website_domain in email:
-                            logging.info(f"Found matching domain email: {email}")
-                            temp_driver.quit()
-                            return email
-                
-                # If no domain match, return the first valid email
-                for email in emails:
-                    email = email.lower().strip()
-                    if not any(excluded in email for excluded in excluded_domains):
-                        logging.info(f"Found email from page source: {email}")
-                        temp_driver.quit()
-                        return email
-                        
-            except Exception as e:
-                logging.warning(f"Error searching page source for emails: {e}")
+            # Get base URL for constructing contact page URLs
+            base_url = website_url.rstrip('/')
+            if not base_url.startswith('http'):
+                base_url = 'https://' + base_url
             
-            temp_driver.quit()
+            # Try contact/about pages FIRST (more likely to have emails)
+            contact_paths = ['/contact', '/contact-us', '/about', '/about-us', '/contactus']
+            pages_to_try = [base_url] + [base_url + path for path in contact_paths]
+            
+            for page_url in pages_to_try[:3]:  # Limit to 3 pages max
+                try:
+                    logging.info(f"Checking page for email: {page_url}")
+                    temp_driver.get(page_url)
+                    time.sleep(1)
+                    
+                    # Quick check for mailto links first
+                    try:
+                        mailto_links = temp_driver.find_elements(By.XPATH, "//a[contains(@href, 'mailto:')]")
+                        for link in mailto_links:
+                            href = link.get_attribute("href")
+                            if href and 'mailto:' in href:
+                                email = href.replace("mailto:", "").strip()
+                                if '?' in email:
+                                    email = email.split('?')[0]
+                                if re.match(email_pattern, email):
+                                    email = email.lower()
+                                    if not any(ex in email for ex in excluded_domains):
+                                        logging.info(f"Found email from mailto: {email}")
+                                        if created_driver:
+                                            temp_driver.quit()
+                                        return email
+                    except:
+                        pass
+                    
+                    # Search page source
+                    page_source = temp_driver.page_source
+                    emails = re.findall(email_pattern, page_source)
+                    
+                    for email in emails:
+                        email = email.lower().strip()
+                        if not any(ex in email for ex in excluded_domains):
+                            logging.info(f"Found email: {email}")
+                            if created_driver:
+                                temp_driver.quit()
+                            return email
+                            
+                except TimeoutException:
+                    logging.warning(f"Timeout loading {page_url}")
+                    continue
+                except Exception as e:
+                    logging.warning(f"Error checking {page_url}: {e}")
+                    continue
+            
+            if created_driver:
+                temp_driver.quit()
             return None
             
-        except (TimeoutException, Exception) as e:
+        except Exception as e:
             logging.warning(f"Could not extract email from {website_url}: {str(e)}")
-            if 'temp_driver' in locals():
+            if created_driver and temp_driver:
                 try:
                     temp_driver.quit()
                 except:
@@ -971,7 +990,8 @@ class GoogleMapsSearchScraper:
             
         except (TimeoutException, Exception) as e:
             logging.warning(f"Could not extract phone from {business_url}: {str(e)}")
-            if 'temp_driver' in locals():
+            # Only quit driver if we created it (not passed in)
+            if not driver and 'temp_driver' in locals():
                 try:
                     temp_driver.quit()
                 except:

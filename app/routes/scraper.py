@@ -1123,7 +1123,7 @@ def init_search_job():
     """Initialize a scraping job: Create job, find businesses, return job ID"""
     search_scraper = None
     try:
-        user_id = get_jwt_identity()
+        user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
         data = request.get_json()
         url = data.get('url')
         
@@ -1183,13 +1183,14 @@ def init_search_job():
 @scraper_bp.route('/batch', methods=['POST'])
 @jwt_required()
 def process_batch():
-    """Process a small batch of a SearchJob"""
+    """Process a small batch of a SearchJob - optimized for Render 512MB limit"""
     search_scraper = None
     try:
-        user_id = get_jwt_identity()
+        user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
         data = request.get_json()
         job_id = data.get('job_id')
-        limit = data.get('limit', 5)  # Default small batch
+        limit = min(data.get('limit', 2), 3)  # Max 3 businesses per batch for memory
+        skip_email = data.get('skip_email', False)  # Option to skip slow email extraction
         
         if not job_id:
             return jsonify({'error': 'Job ID required'}), 400
@@ -1224,8 +1225,9 @@ def process_batch():
         results = []
         
         # Setup Scraper ONCE for the batch
-        search_scraper = GoogleMapsSearchScraper("dummy")  # URL doesn't matter here
+        search_scraper = GoogleMapsSearchScraper("dummy")
         search_scraper.driver = search_scraper.setup_driver()
+        search_scraper.driver.set_page_load_timeout(15)  # 15 sec timeout
         
         processed_count_in_batch = 0
         
@@ -1233,21 +1235,19 @@ def process_batch():
             try:
                 logging.info(f"Processing batch item {idx}: {item['name']}")
                 
-                # Scrape details using the shared driver
-                # Phone
+                # Extract from Google Maps page (fast - same domain)
                 phone = search_scraper.extract_phone_from_business_page(item['url'], driver=search_scraper.driver)
-                
-                # Address
                 address = search_scraper.extract_address_from_business_page(item['url'], driver=search_scraper.driver)
-                
-                # Website
                 website = search_scraper.extract_website_from_business_page(item['url'], driver=search_scraper.driver)
                 
-                # Email
+                # Email extraction is SLOW (visits external sites) - skip by default
                 email = None
-                real_website = website if website else item['url']
-                if real_website and 'http' in real_website:
-                    email = search_scraper.extract_email_from_website(real_website)
+                if not skip_email and website and 'google.com' not in website:
+                    try:
+                        # Use the same driver to save memory
+                        email = search_scraper.extract_email_from_website(website, driver=search_scraper.driver)
+                    except Exception as email_err:
+                        logging.warning(f"Email extraction failed for {item['name']}: {email_err}")
 
                 # Prepare Data
                 business_data = {
@@ -1260,23 +1260,24 @@ def process_batch():
                     'user_id': user_id
                 }
                 
-                # Save to MongoDB (Incremental Persistence)
+                # Save to DB immediately (incremental persistence)
                 existing = check_existing_business(user_id, business_data['company_name'], business_data['website_url'])
                 if not existing:
                     ScrapedData.create(business_data)
                     logging.info(f"Saved: {item['name']}")
                 
-                # Update Item Status in Memory
                 items[idx]['status'] = 'completed'
                 processed_count_in_batch += 1
                 results.append(business_data)
                 
             except Exception as e:
                 logging.error(f"Error processing item {item['name']}: {e}")
-                items[idx]['status'] = 'failed'  # Mark failed so we don't retry forever
+                items[idx]['status'] = 'failed'
         
         # Cleanup Driver
         search_scraper.driver.quit()
+        import gc
+        gc.collect()  # Force garbage collection
         
         # Update Job Progress in DB
         new_processed_count = job['processed_items'] + processed_count_in_batch
