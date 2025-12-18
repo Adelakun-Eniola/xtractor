@@ -716,25 +716,41 @@ class GoogleMapsSearchScraper:
             WebDriverWait(temp_driver, 5).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(1)
+            time.sleep(2)  # Increased wait for Google Maps to fully load
             
-            # Try multiple selectors to find website links
+            # PRIORITY 1: Look for the website button/link in Google Maps (most reliable)
+            # These selectors target the actual website link in the business info panel
+            priority_selectors = [
+                # Website button with data-item-id containing 'authority' (most reliable)
+                "//a[@data-item-id='authority']",
+                # Website link with aria-label
+                "//a[contains(@aria-label, 'Website:')]",
+                "//a[contains(@aria-label, 'website')]",
+                # Button that opens website
+                "//button[@data-item-id='authority']//following::a[1]",
+                # Link inside website section
+                "//div[contains(@class, 'rogA2c')]//a[contains(@href, 'http')]",
+            ]
+            
+            for selector in priority_selectors:
+                try:
+                    elements = temp_driver.find_elements(By.XPATH, selector)
+                    for element in elements:
+                        href = element.get_attribute("href")
+                        if href and 'google.com' not in href and 'goo.gl' not in href:
+                            logging.info(f"Found website URL (priority): {href}")
+                            if not driver:
+                                temp_driver.quit()
+                            return href
+                except:
+                    continue
+            
+            # PRIORITY 2: Try standard selectors
             website_selectors = [
                 "//a[contains(@href, 'http') and contains(@aria-label, 'Website')]",
                 "//a[contains(@data-item-id, 'authority') and contains(@href, 'http')]",
-                "//a[contains(@href, 'http') and contains(text(), 'Website')]",
                 "//a[@data-tooltip='Open website']",
                 "//div[contains(@class, 'fontBodyMedium')]//a[contains(@href, 'http')]",
-                "//button[contains(@aria-label, 'Website')]//a",
-                "//a[contains(@href, '.com')]",
-                "//a[contains(@href, '.ca')]",
-                "//a[contains(@href, '.org')]",
-                "//a[contains(@href, '.net')]",
-                "//a[contains(@href, '.gov')]",
-                "//a[contains(@href, '.edu')]",
-                "//a[contains(@href, '.com.au')]",
-                "//a[contains(@href, '.co.uk')]",
-                "//a[contains(@href, '.au')]",
             ]
             
             for selector in website_selectors:
@@ -956,14 +972,24 @@ class GoogleMapsSearchScraper:
             WebDriverWait(temp_driver, 5).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(1)
+            time.sleep(2)  # Increased wait for Google Maps to fully load
             
+            # PRIORITY 1: Most reliable phone selectors for Google Maps
             phone_selectors = [
-                "//button[@data-item-id='phone:tel:']//div[contains(@class, 'fontBodyMedium')]",
-                "//button[contains(@aria-label, 'Phone')]//div[contains(@class, 'fontBodyMedium')]",
-                "//a[contains(@href, 'tel:')]",
-                "//button[contains(@data-tooltip, 'Copy phone number')]//div",
-                "//div[contains(@class, 'rogA2c') and contains(., '+')]",
+                # Phone button with data-item-id (most reliable)
+                "//button[starts-with(@data-item-id, 'phone:tel:')]//div[contains(@class, 'fontBodyMedium')]",
+                "//button[contains(@data-item-id, 'phone')]//div[contains(@class, 'fontBodyMedium')]",
+                # Phone link with aria-label
+                "//a[contains(@aria-label, 'Phone:')]",
+                "//button[contains(@aria-label, 'Phone:')]//div",
+                # Tel links
+                "//a[starts-with(@href, 'tel:')]",
+                # Copy phone button
+                "//button[contains(@data-tooltip, 'Copy phone')]//div",
+                "//button[contains(@aria-label, 'Copy phone')]//div",
+                # Fallback selectors
+                "//div[contains(@class, 'rogA2c')]//span[contains(text(), '(')]",
+                "//div[contains(@class, 'Io6YTe') and contains(text(), '(')]",
             ]
             
             for selector in phone_selectors:

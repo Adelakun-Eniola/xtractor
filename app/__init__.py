@@ -19,6 +19,9 @@ def create_app():
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
     app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'dev-jwt-secret')
     
+    # JWT Token Expiry - 24 hours for long scraping sessions
+    app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
+    
     # Supabase PostgreSQL Configuration
     database_url = os.getenv('DATABASE_URL')
     

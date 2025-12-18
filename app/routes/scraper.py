@@ -10,6 +10,7 @@ import re
 import os
 import logging
 import json
+import time
 from datetime import datetime
 
 scraper_bp = Blueprint('scraper', __name__, url_prefix='/api/scraper')
@@ -1227,7 +1228,7 @@ def process_batch():
         # Setup Scraper ONCE for the batch
         search_scraper = GoogleMapsSearchScraper("dummy")
         search_scraper.driver = search_scraper.setup_driver()
-        search_scraper.driver.set_page_load_timeout(15)  # 15 sec timeout
+        search_scraper.driver.set_page_load_timeout(20)  # 20 sec timeout for slower pages
         
         processed_count_in_batch = 0
         
@@ -1235,24 +1236,36 @@ def process_batch():
             try:
                 logging.info(f"Processing batch item {idx}: {item['name']}")
                 
-                # Extract from Google Maps page (fast - same domain)
+                # Navigate to the business page ONCE
+                try:
+                    search_scraper.driver.get(item['url'])
+                    time.sleep(2)  # Wait for page to load
+                except Exception as nav_err:
+                    logging.warning(f"Navigation error for {item['name']}: {nav_err}")
+                
+                # Extract all data from the same page (more efficient)
                 phone = search_scraper.extract_phone_from_business_page(item['url'], driver=search_scraper.driver)
                 address = search_scraper.extract_address_from_business_page(item['url'], driver=search_scraper.driver)
                 website = search_scraper.extract_website_from_business_page(item['url'], driver=search_scraper.driver)
                 
-                # Email extraction is SLOW (visits external sites) - skip by default
+                logging.info(f"Extracted for {item['name']}: phone={phone}, address={address}, website={website}")
+                
+                # Email extraction - try if we have a valid website
                 email = None
-                if not skip_email and website and 'google.com' not in website:
+                if not skip_email and website and 'google.com' not in website and 'goo.gl' not in website:
                     try:
-                        # Use the same driver to save memory
+                        logging.info(f"Extracting email from website: {website}")
                         email = search_scraper.extract_email_from_website(website, driver=search_scraper.driver)
+                        logging.info(f"Email result for {item['name']}: {email}")
                     except Exception as email_err:
                         logging.warning(f"Email extraction failed for {item['name']}: {email_err}")
 
-                # Prepare Data
+                # Prepare Data - use actual website URL, not Google Maps URL
+                final_website = website if (website and 'google.com' not in website) else None
+                
                 business_data = {
                     'company_name': item['name'],
-                    'website_url': website if website else item['url'],
+                    'website_url': final_website if final_website else item['url'],
                     'source_url': job['search_url'],
                     'address': address,
                     'phone': phone,
@@ -1272,6 +1285,8 @@ def process_batch():
                 
             except Exception as e:
                 logging.error(f"Error processing item {item['name']}: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
                 items[idx]['status'] = 'failed'
         
         # Cleanup Driver
@@ -1299,6 +1314,8 @@ def process_batch():
 
     except Exception as e:
         logging.error(f"Batch processing error: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
         if search_scraper and getattr(search_scraper, 'driver', None):
             try:
                 search_scraper.driver.quit()
