@@ -542,6 +542,27 @@ class GoogleMapsSearchScraper:
                     # DEBUG: Print scraped data
                     logging.info(f"Scraped data for {business_name}: {scraped_data}")
                     
+                    # --- DEEP SCRAPING START ---
+                    # If we found a website URL that is NOT the source Google Maps URL, visit it to get the email!
+                    website_url = scraped_data.get('website_url')
+                    if website_url and website_url != 'N/A' and website_url != business_url:
+                        if 'google.com' not in website_url: # Extra safety check
+                            logging.info(f"Deep scraping: Visiting {website_url} for email...")
+                            try:
+                                # We can reuse the existing driver or let extract_email create one
+                                # Since we are in a loop, let's reuse to save time if possible, 
+                                # but extract_email_from_website handles its own driver if none provided.
+                                # Let's provide our current driver if it's alive, or let it make one.
+                                # actually self.driver is closed above at step 2. We need to open a new one or let the function do it.
+                                # extract_email_from_website creates a new driver if none is passed.
+                                email = self.extract_email_from_website(website_url)
+                                if email:
+                                    scraped_data['email'] = email
+                                    logging.info(f"Deep scraping success! Found email: {email}")
+                            except Exception as deep_err:
+                                logging.warning(f"Deep scraping failed for {website_url}: {deep_err}")
+                    # --- DEEP SCRAPING END ---
+                    
                     # Only return data if we have meaningful data (don't save here - let route handle saving)
                     if scraped_data.get('company_name') != 'N/A':
                         logging.info(f"Successfully scraped data for {business_name}")
@@ -658,6 +679,8 @@ class GoogleMapsSearchScraper:
                 "//div[@data-tooltip='Copy address']",
                 "//button[contains(@data-tooltip, 'Copy address')]//div",
                 "//div[contains(@class, 'rogA2c')]",  # Address container
+                "//address", 
+                "//div[contains(@class, 'Io6YTe') and contains(@class, 'fontBodyMedium')]", # Common text container
             ]
             
             for selector in address_selectors:
@@ -737,7 +760,8 @@ class GoogleMapsSearchScraper:
                     elements = temp_driver.find_elements(By.XPATH, selector)
                     for element in elements:
                         href = element.get_attribute("href")
-                        if href and 'google.com' not in href and 'goo.gl' not in href:
+                        # Strict filter: Must not be a Google Maps/Search link
+                        if href and 'google.com/maps' not in href and 'google.com/search' not in href and 'goo.gl' not in href:
                             logging.info(f"Found website URL (priority): {href}")
                             if not driver:
                                 temp_driver.quit()
@@ -760,7 +784,7 @@ class GoogleMapsSearchScraper:
                         href = element.get_attribute("href")
                         if href:
                             # Make sure it's not a Google URL
-                            if 'google.com' not in href and 'goo.gl' not in href and 'maps' not in href:
+                            if 'google.com/maps' not in href and 'google.com/search' not in href and 'goo.gl' not in href:
                                 # Check if it contains common domain extensions (including country-code TLDs)
                                 domain_extensions = [
                                     '.com', '.ca', '.org', '.net', '.gov', '.edu', '.co', '.io', '.biz', '.info',
@@ -995,7 +1019,9 @@ class GoogleMapsSearchScraper:
                 "//button[contains(@aria-label, 'Copy phone')]//div",
                 # Fallback selectors
                 "//div[contains(@class, 'rogA2c')]//span[contains(text(), '(')]",
-                "//div[contains(@class, 'Io6YTe') and contains(text(), '(')]",
+                "//div[contains(@class, 'Io6YTe') and contains(text(), '(')]", 
+                "//div[contains(@class, 'Io6YTe') and contains(text(), '+')]",
+
             ]
             
             for selector in phone_selectors:
