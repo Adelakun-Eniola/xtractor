@@ -90,41 +90,96 @@ class WebScraper:
         url_pattern = r'^(https?:\/\/)?([\w\-]+(\.[\w\-]+)+)(\/.*)?$'
         return url if re.match(url_pattern, url, re.IGNORECASE) else "N/A"
 
-    def setup_driver(self, headless=True):
-        logging.info(f"Setting up webdriver (headless={headless})")
+    def setup_driver(self, headless=True, retry_count=0):
+        """Setup Chrome WebDriver with robust options for Render deployment.
+        
+        Args:
+            headless: Run in headless mode (default True)
+            retry_count: Internal retry counter for recursive retries
+            
+        Returns:
+            WebDriver instance
+        """
+        logging.info(f"Setting up webdriver (headless={headless}, retry={retry_count})")
 
         options = webdriver.ChromeOptions()
+        
+        # Essential options for containerized environments (Render, Docker, etc.)
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        # options.add_argument("--remote-debugging-port=9222") # Removed to prevent port conflicts
         options.add_argument("--disable-extensions")
+        options.add_argument("--disable-software-rasterizer")
+        
+        # Memory optimization for Render's 512MB limit
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--disable-sync")
+        options.add_argument("--disable-translate")
+        options.add_argument("--disable-features=VizDisplayCompositor")
+        options.add_argument("--disable-features=IsolateOrigins,site-per-process")
+        options.add_argument("--single-process")  # Important for low-memory environments
+        options.add_argument("--no-zygote")  # Prevents fork issues
+        
+        # Fix for DevToolsActivePort error
+        options.add_argument("--remote-debugging-port=0")  # Use random port
+        options.add_argument("--disable-setuid-sandbox")
+        
+        # Window size
         options.add_argument("--window-size=1920,1080")
         
+        # Headless mode
         if headless:
             options.add_argument("--headless=new")
+        
+        # Additional stability options
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-browser-side-navigation")
+        options.add_argument("--disable-features=TranslateUI")
+        options.add_argument("--disable-ipc-flooding-protection")
+        
+        # User agent to avoid bot detection
+        options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
         system = platform.system().lower()
 
-        if system == "darwin":  # macOS dev
-            try:
-                from webdriver_manager.chrome import ChromeDriverManager
-                driver_path = ChromeDriverManager().install()
-                service = Service(driver_path)
+        try:
+            if system == "darwin":  # macOS dev
+                try:
+                    from webdriver_manager.chrome import ChromeDriverManager
+                    driver_path = ChromeDriverManager().install()
+                    service = Service(driver_path)
+                    driver = webdriver.Chrome(service=service, options=options)
+                    logging.info("Using webdriver_manager on macOS")
+                except ImportError:
+                    logging.error("webdriver_manager not available on macOS")
+                    raise
+            else:  # Linux (Render)
+                chromium_path = os.getenv("CHROMIUM_PATH", "/usr/bin/chromium")
+                chromedriver_path = os.getenv("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
+                
+                # Log paths for debugging
+                logging.info(f"Chromium path: {chromium_path}")
+                logging.info(f"ChromeDriver path: {chromedriver_path}")
+                
+                options.binary_location = chromium_path
+                service = Service(executable_path=chromedriver_path)
                 driver = webdriver.Chrome(service=service, options=options)
-                logging.info("Using webdriver_manager on macOS")
-            except ImportError:
-                logging.error("webdriver_manager not available on macOS")
-                raise
-        else:  # Linux (Render)
-            chromium_path = os.getenv("CHROMIUM_PATH", "/usr/bin/chromium")
-            chromedriver_path = os.getenv("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
-            options.binary_location = chromium_path
-            service = Service(executable_path=chromedriver_path)
-            driver = webdriver.Chrome(service=service, options=options)
-            logging.info(f"Using system Chrome at {chromium_path}")
+                logging.info(f"Using system Chrome at {chromium_path}")
 
-        return driver
+            return driver
+            
+        except WebDriverException as e:
+            error_msg = str(e)
+            logging.error(f"WebDriver setup failed: {error_msg}")
+            
+            # Retry up to 2 times for transient errors
+            if retry_count < 2 and "DevToolsActivePort" in error_msg:
+                logging.info(f"Retrying driver setup (attempt {retry_count + 1})...")
+                time.sleep(2)  # Wait before retry
+                return self.setup_driver(headless=headless, retry_count=retry_count + 1)
+            
+            raise
 
     def extract_address(self):
         """Extract address using robust selectors"""

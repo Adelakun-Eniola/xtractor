@@ -1132,6 +1132,17 @@ def test_address_extraction():
 @jwt_required()
 def init_search_job():
     """Initialize a scraping job: Create job, find businesses, return job ID"""
+    import gc
+    import subprocess
+    
+    def kill_zombie_chrome():
+        """Kill any zombie Chrome processes to free resources"""
+        try:
+            subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=2)
+            subprocess.run(['pkill', '-f', 'chromium'], capture_output=True, timeout=2)
+        except:
+            pass
+    
     search_scraper = None
     try:
         user_id = int(get_jwt_identity())  # PostgreSQL user IDs are integers
@@ -1143,14 +1154,38 @@ def init_search_job():
         if not url or not is_google_maps_search_url(url):
             return jsonify({'error': 'Valid Google Maps search URL is required'}), 400
 
+        # Kill any zombie Chrome processes before starting
+        kill_zombie_chrome()
+        gc.collect()
+        time.sleep(0.5)
+        
         # Stage 1: Get the list of businesses
         search_scraper = GoogleMapsSearchScraper(url)
-        search_scraper.driver = search_scraper.setup_driver()
+        
+        try:
+            search_scraper.driver = search_scraper.setup_driver()
+        except Exception as driver_error:
+            logging.error(f"Driver setup failed: {driver_error}")
+            # Try one more time after cleanup
+            kill_zombie_chrome()
+            gc.collect()
+            time.sleep(2)
+            search_scraper.driver = search_scraper.setup_driver()
         
         # Scrape business list
         businesses_data = search_scraper.extract_businesses_with_names()
         
-        search_scraper.driver.quit()  # Close immediately
+        # Close driver immediately after extraction
+        if search_scraper.driver:
+            try:
+                search_scraper.driver.quit()
+            except:
+                pass
+            search_scraper.driver = None
+        
+        # Cleanup
+        kill_zombie_chrome()
+        gc.collect()
         
         if not businesses_data:
             return jsonify({'error': 'No businesses found at that location'}), 404
@@ -1181,13 +1216,37 @@ def init_search_job():
             'total_items': len(items)
         }), 201
         
-    except Exception as e:
-        logging.error(f"Error initializing job: {e}")
+    except WebDriverException as e:
+        error_msg = str(e)
+        logging.error(f"WebDriver error initializing job: {error_msg}")
+        
+        # Cleanup on error
         if search_scraper and getattr(search_scraper, 'driver', None):
             try:
                 search_scraper.driver.quit()
             except:
                 pass
+        kill_zombie_chrome()
+        gc.collect()
+        
+        # Return user-friendly error message
+        if "DevToolsActivePort" in error_msg:
+            return jsonify({'error': 'Browser initialization failed. Please try again in a moment.'}), 503
+        return jsonify({'error': f'Browser error: {error_msg[:100]}'}), 500
+        
+    except Exception as e:
+        logging.error(f"Error initializing job: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+        
+        if search_scraper and getattr(search_scraper, 'driver', None):
+            try:
+                search_scraper.driver.quit()
+            except:
+                pass
+        kill_zombie_chrome()
+        gc.collect()
+        
         return jsonify({'error': str(e)}), 500
 
 
