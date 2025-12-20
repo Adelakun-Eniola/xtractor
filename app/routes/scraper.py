@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, Response
+from flask import Blueprint, request, jsonify, Response, make_response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask_cors import CORS
 from app.models.scraped_data_pg import ScrapedData
@@ -11,9 +11,19 @@ import os
 import logging
 import json
 import time
+import io
 from datetime import datetime
 
+# Try to import pandas, fall back to csv module if not available
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+    import csv
+
 scraper_bp = Blueprint('scraper', __name__, url_prefix='/api/scraper')
+CORS(scraper_bp)
 CORS(scraper_bp)
 
 
@@ -1333,16 +1343,41 @@ def process_batch():
                 safe_quit_driver(search_scraper)
                 gc.collect()
 
-        # Prepare business data
-        final_website = website if (website and 'google.com' not in website) else None
+        # Prepare business data - Clean values (null for invalid/missing data)
+        def clean_value(value, invalid_patterns=None):
+            """Return None if value is empty, N/A, or matches invalid patterns"""
+            if not value or value == 'N/A' or value == 'Not found':
+                return None
+            if invalid_patterns:
+                for pattern in invalid_patterns:
+                    if pattern.lower() in str(value).lower():
+                        return None
+            return value
+        
+        # Clean phone - reject plus codes and invalid formats
+        clean_phone = clean_value(phone, ['schema.org', 'plus code', '+code'])
+        # Validate phone has at least some digits
+        if clean_phone:
+            digit_count = sum(c.isdigit() for c in clean_phone)
+            if digit_count < 7:  # Phone should have at least 7 digits
+                clean_phone = None
+        
+        # Clean website - reject schema.org and other invalid URLs
+        clean_website = clean_value(website, ['schema.org', 'w3.org', 'google.com', 'goo.gl', 'googleapis'])
+        
+        # Clean email
+        clean_email = clean_value(email, ['schema.org', 'w3.org', 'example.com', 'test.com'])
+        
+        # Clean address
+        clean_address = clean_value(address)
         
         business_data = {
             'company_name': target_item['name'],
-            'website_url': final_website if final_website else target_item['url'],
+            'website_url': clean_website,
             'source_url': job['search_url'],
-            'address': address,
-            'phone': phone,
-            'email': email,
+            'address': clean_address,
+            'phone': clean_phone,
+            'email': clean_email,
             'user_id': user_id
         }
         
@@ -1402,3 +1437,111 @@ def process_batch():
         safe_quit_driver(search_scraper)
         kill_zombie_chrome()
         gc.collect()
+
+
+# ============================================
+# CSV EXPORT ENDPOINT
+# ============================================
+
+@scraper_bp.route('/export/<job_id>', methods=['GET'])
+@jwt_required()
+def export_job_to_csv(job_id):
+    """Export scraping job results to CSV file.
+    
+    Returns a CSV file with UTF-8 BOM encoding for Excel compatibility.
+    Columns: Business Name, Phone, Address, Email, Website
+    """
+    try:
+        user_id = int(get_jwt_identity())
+        
+        # Fetch the job
+        job = SearchJob.find_by_id(job_id, user_id)
+        if not job:
+            return jsonify({'error': 'Job not found'}), 404
+        
+        # Get completed items from the job
+        items = job.get('items', [])
+        completed_items = [item for item in items if item.get('status') == 'completed']
+        
+        if not completed_items:
+            return jsonify({'error': 'No completed items to export'}), 404
+        
+        # Fetch scraped data for this job from database
+        # We'll match by company name and source URL
+        all_scraped = ScrapedData.find_by_user_id(user_id, limit=1000)
+        
+        # Build export data
+        export_data = []
+        for item in completed_items:
+            # Find matching scraped data
+            matching_data = None
+            for scraped in all_scraped:
+                if scraped.get('company_name') == item.get('name'):
+                    matching_data = scraped
+                    break
+            
+            row = {
+                'Business Name': item.get('name', None),
+                'Phone': matching_data.get('phone') if matching_data else None,
+                'Address': matching_data.get('address') if matching_data else None,
+                'Email': matching_data.get('email') if matching_data else None,
+                'Website': matching_data.get('website_url') if matching_data else None
+            }
+            
+            # Clean values - replace empty strings and 'N/A' with None
+            for key in row:
+                if row[key] in ['', 'N/A', 'Not found', 'null']:
+                    row[key] = None
+            
+            export_data.append(row)
+        
+        # Generate CSV
+        if PANDAS_AVAILABLE:
+            # Use pandas for better CSV generation
+            df = pd.DataFrame(export_data)
+            
+            # Ensure column order
+            columns = ['Business Name', 'Phone', 'Address', 'Email', 'Website']
+            df = df.reindex(columns=columns)
+            
+            # Replace NaN with empty string for cleaner CSV
+            df = df.fillna('')
+            
+            # Generate CSV with UTF-8 BOM for Excel compatibility
+            output = io.StringIO()
+            df.to_csv(output, index=False, encoding='utf-8')
+            csv_content = output.getvalue()
+            
+            # Add BOM for Excel
+            csv_bytes = b'\xef\xbb\xbf' + csv_content.encode('utf-8')
+        else:
+            # Fallback to csv module
+            output = io.StringIO()
+            columns = ['Business Name', 'Phone', 'Address', 'Email', 'Website']
+            writer = csv.DictWriter(output, fieldnames=columns)
+            writer.writeheader()
+            
+            for row in export_data:
+                # Replace None with empty string
+                clean_row = {k: (v if v is not None else '') for k, v in row.items()}
+                writer.writerow(clean_row)
+            
+            csv_content = output.getvalue()
+            # Add BOM for Excel
+            csv_bytes = b'\xef\xbb\xbf' + csv_content.encode('utf-8')
+        
+        # Create response
+        response = make_response(csv_bytes)
+        response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+        response.headers['Content-Disposition'] = f'attachment; filename=leads-{job_id}.csv'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        
+        logging.info(f"Exported {len(export_data)} leads for job {job_id}")
+        
+        return response
+        
+    except Exception as e:
+        logging.error(f"Error exporting job {job_id}: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
