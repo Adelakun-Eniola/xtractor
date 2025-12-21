@@ -473,7 +473,46 @@ class GoogleMapsSearchScraper:
                     
         except Exception as e:
             logging.warning(f"Scrolling error: {e}")
-    
+
+    def _handle_google_consent(self):
+        """Handle Google consent dialogs that may appear."""
+        try:
+            # Common consent button selectors
+            consent_selectors = [
+                "//button[contains(text(), 'Accept all')]",
+                "//button[contains(text(), 'Accept')]",
+                "//button[contains(text(), 'I agree')]",
+                "//button[contains(text(), 'Agree')]",
+                "//button[@aria-label='Accept all']",
+                "//button[@aria-label='Accept']",
+                "//form//button[1]",  # First button in consent form
+                "//div[@role='dialog']//button",
+            ]
+            
+            for selector in consent_selectors:
+                try:
+                    buttons = self.driver.find_elements(By.XPATH, selector)
+                    for button in buttons:
+                        if button.is_displayed():
+                            button.click()
+                            logging.info(f"Clicked consent button: {selector}")
+                            time.sleep(2)
+                            return True
+                except:
+                    continue
+            return False
+        except Exception as e:
+            logging.debug(f"Consent handling error: {e}")
+            return False
+
+    def _save_debug_screenshot(self, filename="debug_screenshot.png"):
+        """Save a screenshot for debugging."""
+        try:
+            self.driver.save_screenshot(filename)
+            logging.info(f"Saved debug screenshot to {filename}")
+        except Exception as e:
+            logging.warning(f"Could not save screenshot: {e}")
+
     def extract_businesses_with_names(self, limit=None):
         """Extract ALL businesses from Google Maps search results.
         
@@ -483,11 +522,52 @@ class GoogleMapsSearchScraper:
         logging.info(f"Extracting businesses (limit: {'unlimited' if limit is None else limit})")
         
         try:
+            logging.info(f"Loading URL: {self.search_url}")
             self.driver.get(self.search_url)
-            WebDriverWait(self.driver, 15).until(
+            
+            # Wait for page to load
+            WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            time.sleep(5)  # Wait for Google Maps to fully load
+            time.sleep(3)
+            
+            # Handle Google consent dialog if present
+            self._handle_google_consent()
+            time.sleep(2)
+            
+            # Log current URL and page title for debugging
+            current_url = self.driver.current_url
+            page_title = self.driver.title
+            logging.info(f"Current URL: {current_url}")
+            logging.info(f"Page title: {page_title}")
+            
+            # Check if we're on Google Maps
+            if "maps" not in current_url.lower() and "maps" not in page_title.lower():
+                logging.warning("Not on Google Maps page - may have been redirected")
+                # Try navigating again
+                self.driver.get(self.search_url)
+                time.sleep(5)
+                self._handle_google_consent()
+            
+            # Wait for Google Maps to fully load - look for specific elements
+            try:
+                WebDriverWait(self.driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='feed'], div.m6QErb, div[aria-label*='Results']"))
+                )
+                logging.info("Found results container")
+            except TimeoutException:
+                logging.warning("Could not find results container - page may not have loaded correctly")
+                # Log page source length for debugging
+                page_source = self.driver.page_source
+                logging.info(f"Page source length: {len(page_source)}")
+                
+                # Check for common issues
+                if "consent" in page_source.lower():
+                    logging.warning("Consent dialog may still be present")
+                if "captcha" in page_source.lower():
+                    logging.warning("CAPTCHA detected - Google may be blocking")
+            
+            time.sleep(3)  # Additional wait for dynamic content
             
             logging.info("Page loaded, starting business extraction...")
             

@@ -1188,7 +1188,11 @@ def init_search_job():
         gc.collect()
         
         if not businesses_data:
-            return jsonify({'error': 'No businesses found at that location'}), 404
+            logging.warning(f"No businesses found for URL: {url}")
+            return jsonify({
+                'error': 'No businesses found at that location. The page may not have loaded correctly or Google may be blocking automated access. Please try again.',
+                'url': url
+            }), 404
             
         # Create SearchJob entry
         items = []
